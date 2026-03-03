@@ -71,8 +71,6 @@ class RilletSink(HotglueSink):
 
     def lookup_in_cache(self, lookup_name: str, key: str) -> str | None:
         """Lazy-cached lookup: returns the mapped value for *key*, or None."""
-        cache = self._lookup_cache.get(lookup_name, {})
-        if key not in cache:
+        if lookup_name not in self._lookup_cache:
             self._refresh_lookup_cache(lookup_name)
-            cache = self._lookup_cache.get(lookup_name, {})
-        return cache.get(key)
+        return self._lookup_cache.get(lookup_name, {}).get(key)

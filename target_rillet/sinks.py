@@ -8,8 +8,8 @@ class JournalsSink(RilletSink):
     name = "JournalEntries"
     endpoint = "/journal-entries"
     
-    def _handle_custom_fields(self, custom_fields: list[dict]) -> list[dict]:
-        """Handle custom fields."""
+    def _resolve_custom_fields(self, custom_fields: list[dict]) -> list[dict]:
+        """Resolve custom field names and values to their corresponding Rillet IDs via cache lookups."""
         fields = []
         for custom_field in custom_fields:
             if not custom_field.get("name") or not custom_field.get("value"):
@@ -89,7 +89,7 @@ class JournalsSink(RilletSink):
             line_item["description"] = item["description"]
 
         if item.get("customFields"):
-            line_item["fields"] = self._handle_custom_fields(item["customFields"])
+            line_item["fields"] = self._resolve_custom_fields(item["customFields"])
 
         return line_item, None
 
@@ -142,7 +142,7 @@ class JournalsSink(RilletSink):
         """Create or update a journal entry in Rillet."""
         
         if "error" in record:
-            return None, False, record["error"]
+            return None, False, {"error": record["error"]}
 
         method = "POST"
         endpoint = self.endpoint
