@@ -1,7 +1,6 @@
 """Rillet target sink class, which handles writing streams."""
 
 from target_rillet.client import RilletSink
-import json
 
 class JournalsSink(RilletSink):
     """Rillet target sink for posting journal entries."""
@@ -9,7 +8,7 @@ class JournalsSink(RilletSink):
     name = "JournalEntries"
     endpoint = "/journal-entries"
     
-    def handle_custom_fields(self, custom_fields: list[dict]) -> list[dict]:
+    def _handle_custom_fields(self, custom_fields: list[dict]) -> list[dict]:
         """Handle custom fields."""
         fields = []
         for custom_field in custom_fields:
@@ -35,6 +34,26 @@ class JournalsSink(RilletSink):
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
         """Map a unified JournalEntry record to the Rillet API payload."""
+        payload = {
+            "id": record.get("id"),
+        }
+        name = (
+            record.get("journalEntryNumber")
+            or record.get("number")
+            or record.get("description")
+        )
+        
+        if not name:
+            payload["error"] = "Journal entry number, number, or description is required"
+            return payload
+
+        payload["name"] = name
+
+        currency = record.get("currency", "USD")
+        payload["currency"] = currency
+
+        payload["date"] = record.get("transactionDate", "")
+
         line_items = []
 
         for item in record.get("lineItems") or []:
@@ -48,7 +67,8 @@ class JournalsSink(RilletSink):
                 side = "CREDIT"
                 raw_amount = credit
             else:
-                raise ValueError(f"One of debitAmount or creditAmount is required for line item {item}")
+                payload["error"] = f"One of debitAmount or creditAmount is required for line item {item}"
+                return payload
 
             currency = record.get("currency", "USD")
             if item.get("accountNumber"):
@@ -56,10 +76,11 @@ class JournalsSink(RilletSink):
             else:
                 account_code = self.lookup_in_cache("accounts", item["accountName"])
                 if not account_code:
-                    raise ValueError(f"Account name {item['accountName']} not found in Rillet")
+                    payload["error"] = f"Account name {item['accountName']} not found in Rillet"
+                    return payload
             if not account_code:
-                self.logger.warning(f"One of accountNumber or accountName is required for line item {item}")
-                continue
+                    payload["error"] = f"One of accountNumber or accountName is required for line item {item}"
+                    return payload
 
             line_item = {
                 "amount": {
@@ -74,37 +95,20 @@ class JournalsSink(RilletSink):
                 line_item["description"] = item["description"]
                 
             if item.get("customFields"):
-                line_item["fields"] = self.handle_custom_fields(item["customFields"])
+                line_item["fields"] = self._handle_custom_fields(item["customFields"])
 
 
             line_items.append(line_item)
 
-        name = (
-            record.get("journalEntryNumber")
-            or record.get("number")
-            or record.get("description")
-        )
-        
-        if not name:
-            raise ValueError("Journal entry number, number, or description is required")
-
-        currency = record.get("currency", "USD")
-
-        payload = {
-            'id': record.get("id"),
-            "name": name,
-            "currency": currency,
-            "date": record.get("transactionDate", ""),
-            "items": line_items,
-        }
-        
+        payload["items"] = line_items
 
         if record.get("subsidiaryId"):
             payload["subsidiary_id"] = record["subsidiaryId"]
         elif record.get("subsidiaryName"):
             payload["subsidiary_id"] = self.lookup_in_cache("subsidiaries", record["subsidiaryName"])
         if not payload.get("subsidiary_id"):
-            raise ValueError(f"Subsidiary name {record.get('subsidiaryName')} not found in Rillet")
+            payload["error"] = f"Subsidiary name {record.get('subsidiaryName')} not found in Rillet"
+            return payload
 
         if record.get("exchangeRate") and record.get("currency"):
             payload["exchange_rate"] = {
@@ -118,6 +122,10 @@ class JournalsSink(RilletSink):
 
     def upsert_record(self, record: dict, context: dict):
         """Create or update a journal entry in Rillet."""
+        
+        if "error" in record:
+            return None, False, record["error"]
+
         method = "POST"
         endpoint = self.endpoint
 
