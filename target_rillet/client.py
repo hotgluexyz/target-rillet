@@ -1,6 +1,9 @@
 """Rillet target sink base client."""
 
+from typing import Dict, List, Optional
+
 import requests
+from hotglue_singer_sdk.plugin_base import PluginBase
 from hotglue_singer_sdk.target_sdk.client import HotglueSink
 
 
@@ -10,13 +13,22 @@ class RilletSink(HotglueSink):
     base_url = "https://api.rillet.com"
     endpoint = ""
     api_version = "2"
-    _lookup_cache: dict = {}
 
     LOOKUPS = {
         "accounts": {"endpoint": "/accounts", "collection": "accounts", "key": "name", "value": "code"},
         "subsidiaries": {"endpoint": "/subsidiaries", "collection": "subsidiaries", "key": "trade_name", "value": "id"},
         "fields": {"endpoint": "/fields", "collection": "fields", "key": "name", "value": "FULL_OBJECT"},
     }
+
+    def __init__(
+        self,
+        target: PluginBase,
+        stream_name: str,
+        schema: Dict,
+        key_properties: Optional[List[str]],
+    ) -> None:
+        self._lookup_cache: dict = {}
+        super().__init__(target, stream_name, schema, key_properties)
 
     @property
     def auth_headers(self) -> dict:

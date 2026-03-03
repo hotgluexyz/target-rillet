@@ -32,91 +32,109 @@ class JournalsSink(RilletSink):
             })
         return fields
 
-    def preprocess_record(self, record: dict, context: dict) -> dict:
-        """Map a unified JournalEntry record to the Rillet API payload."""
-        payload = {
-            "id": record.get("id"),
-        }
+    def _resolve_name(self, record: dict) -> tuple[str | None, str | None]:
+        """Extract the journal entry name, returning (name, error)."""
         name = (
             record.get("journalEntryNumber")
             or record.get("number")
             or record.get("description")
         )
-        
         if not name:
-            payload["error"] = "Journal entry number, number, or description is required"
-            return payload
+            return None, "Journal entry number, number, or description is required"
+        return name, None
 
+    def _classify_side_and_amount(self, item: dict) -> tuple[tuple[str, str] | None, str | None]:
+        """Determine debit/credit side and amount, returning ((side, amount), error)."""
+        debit = item.get("debitAmount")
+        credit = item.get("creditAmount")
+
+        if debit and float(debit) > 0:
+            return ("DEBIT", debit), None
+        if credit and float(credit) > 0:
+            return ("CREDIT", credit), None
+        return None, f"One of debitAmount or creditAmount is required for line item {item}"
+
+    def _resolve_account(self, item: dict) -> tuple[str | None, str | None]:
+        """Resolve account code from number or cached name lookup, returning (code, error)."""
+        if item.get("accountNumber"):
+            return item["accountNumber"], None
+        if item.get("accountName"):
+            account_code = self.lookup_in_cache("accounts", item["accountName"])
+            if account_code:
+                return account_code, None
+            return None, f"Account name {item['accountName']} not found in Rillet"
+        return None, f"One of accountNumber or accountName is required for line item {item}"
+
+    def _build_line_item(self, item: dict, currency: str) -> tuple[dict | None, str | None]:
+        """Build a single Rillet line-item payload, returning (line_item, error)."""
+        classification, err = self._classify_side_and_amount(item)
+        if err:
+            return None, err
+        side, raw_amount = classification
+
+        account_code, err = self._resolve_account(item)
+        if err:
+            return None, err
+
+        line_item = {
+            "amount": {
+                "amount": str(raw_amount),
+                "currency": currency,
+            },
+            "account_code": account_code,
+            "side": side,
+        }
+
+        if item.get("description"):
+            line_item["description"] = item["description"]
+
+        if item.get("customFields"):
+            line_item["fields"] = self._handle_custom_fields(item["customFields"])
+
+        return line_item, None
+
+    def _resolve_subsidiary(self, record: dict) -> tuple[str | None, str | None]:
+        """Resolve subsidiary ID from direct ID or cached name lookup, returning (id, error)."""
+        if record.get("subsidiaryId"):
+            return record["subsidiaryId"], None
+        if record.get("subsidiaryName"):
+            sub_id = self.lookup_in_cache("subsidiaries", record["subsidiaryName"])
+            if sub_id:
+                return sub_id, None
+            return None, f"Subsidiary name {record['subsidiaryName']} not found in Rillet"
+        return None, None
+
+    def preprocess_record(self, record: dict, context: dict) -> dict:
+        """Map a unified JournalEntry record to the Rillet API payload."""
+        payload = {}
+        if record.get("id"):
+            payload["id"] = record["id"]
+
+        name, err = self._resolve_name(record)
+        if err:
+            payload["error"] = err
+            return payload
         payload["name"] = name
 
         currency = record.get("currency", "USD")
         payload["currency"] = currency
-
         payload["date"] = record.get("transactionDate", "")
 
         line_items = []
-
         for item in record.get("lineItems") or []:
-            debit = item.get("debitAmount")
-            credit = item.get("creditAmount")
-
-            if debit and float(debit) > 0:
-                side = "DEBIT"
-                raw_amount = debit
-            elif credit and float(credit) > 0:
-                side = "CREDIT"
-                raw_amount = credit
-            else:
-                payload["error"] = f"One of debitAmount or creditAmount is required for line item {item}"
+            line_item, err = self._build_line_item(item, currency)
+            if err:
+                payload["error"] = err
                 return payload
-
-            currency = record.get("currency", "USD")
-            if item.get("accountNumber"):
-                account_code = item["accountNumber"]
-            else:
-                account_code = self.lookup_in_cache("accounts", item["accountName"])
-                if not account_code:
-                    payload["error"] = f"Account name {item['accountName']} not found in Rillet"
-                    return payload
-            if not account_code:
-                    payload["error"] = f"One of accountNumber or accountName is required for line item {item}"
-                    return payload
-
-            line_item = {
-                "amount": {
-                    "amount": str(raw_amount),
-                    "currency": currency,
-                },
-                "account_code": account_code,
-                "side": side,
-            }
-
-            if item.get("description"):
-                line_item["description"] = item["description"]
-                
-            if item.get("customFields"):
-                line_item["fields"] = self._handle_custom_fields(item["customFields"])
-
-
             line_items.append(line_item)
-
         payload["items"] = line_items
 
-        if record.get("subsidiaryId"):
-            payload["subsidiary_id"] = record["subsidiaryId"]
-        elif record.get("subsidiaryName"):
-            payload["subsidiary_id"] = self.lookup_in_cache("subsidiaries", record["subsidiaryName"])
-        if not payload.get("subsidiary_id"):
-            payload["error"] = f"Subsidiary name {record.get('subsidiaryName')} not found in Rillet"
+        subsidiary_id, err = self._resolve_subsidiary(record)
+        if err:
+            payload["error"] = err
             return payload
-
-        if record.get("exchangeRate") and record.get("currency"):
-            payload["exchange_rate"] = {
-                "base": record["currency"],
-                "target": record["currency"],
-                "rate": str(record["exchangeRate"]),
-                "date": record.get("transactionDate", ""),
-            }
+        if subsidiary_id:
+            payload["subsidiary_id"] = subsidiary_id
 
         return payload
 
