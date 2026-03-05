@@ -32,49 +32,45 @@ class JournalsSink(RilletSink):
             })
         return fields
 
-    def _resolve_name(self, record: dict) -> tuple[str | None, str | None]:
-        """Extract the journal entry name, returning (name, error)."""
+    def _resolve_name(self, record: dict) -> str:
+        """Extract the journal entry name."""
         name = (
             record.get("journalEntryNumber")
             or record.get("number")
             or record.get("description")
         )
         if not name:
-            return None, "Journal entry number, number, or description is required"
-        return name, None
+            raise ValueError("Journal entry number, number, or description is required")
 
-    def _classify_side_and_amount(self, item: dict) -> tuple[tuple[str, str] | None, str | None]:
-        """Determine debit/credit side and amount, returning ((side, amount), error)."""
+        return name
+
+    def _classify_side_and_amount(self, item: dict) -> tuple[str, str]:
+        """Determine debit/credit side and amount."""
         debit = item.get("debitAmount")
         credit = item.get("creditAmount")
 
         if debit and float(debit) > 0:
-            return ("DEBIT", debit), None
+            return "DEBIT", debit
         if credit and float(credit) > 0:
-            return ("CREDIT", credit), None
-        return None, f"One of debitAmount or creditAmount is required for line item {item}"
+            return "CREDIT", credit
+        raise ValueError(f"One of debitAmount or creditAmount is required for line item {item}")
 
-    def _resolve_account(self, item: dict) -> tuple[str | None, str | None]:
-        """Resolve account code from number or cached name lookup, returning (code, error)."""
+    def _resolve_account(self, item: dict) -> str:
+        """Resolve account code from number or cached name lookup."""
         if item.get("accountNumber"):
-            return item["accountNumber"], None
+            return item["accountNumber"]
         if item.get("accountName"):
             account_code = self.lookup_in_cache("accounts", item["accountName"])
             if account_code:
-                return account_code, None
-            return None, f"Account name {item['accountName']} not found in Rillet"
-        return None, f"One of accountNumber or accountName is required for line item {item}"
+                return account_code
+            raise ValueError(f"Account name {item['accountName']} not found in Rillet")
+        raise ValueError(f"One of accountNumber or accountName is required for line item {item}")
 
-    def _build_line_item(self, item: dict, currency: str) -> tuple[dict | None, str | None]:
-        """Build a single Rillet line-item payload, returning (line_item, error)."""
-        classification, err = self._classify_side_and_amount(item)
-        if err:
-            return None, err
-        side, raw_amount = classification
+    def _build_line_item(self, item: dict, currency: str) -> dict:
+        """Build a single Rillet line-item payload."""
+        side, raw_amount = self._classify_side_and_amount(item)
 
-        account_code, err = self._resolve_account(item)
-        if err:
-            return None, err
+        account_code = self._resolve_account(item)
 
         line_item = {
             "amount": {
@@ -91,18 +87,18 @@ class JournalsSink(RilletSink):
         if item.get("customFields"):
             line_item["fields"] = self._resolve_custom_fields(item["customFields"])
 
-        return line_item, None
+        return line_item
 
-    def _resolve_subsidiary(self, record: dict) -> tuple[str | None, str | None]:
-        """Resolve subsidiary ID from direct ID or cached name lookup, returning (id, error)."""
+    def _resolve_subsidiary(self, record: dict) -> str:
+        """Resolve subsidiary ID from direct ID or cached name lookup."""
         if record.get("subsidiaryId"):
-            return record["subsidiaryId"], None
+            return record["subsidiaryId"]
         if record.get("subsidiaryName"):
             sub_id = self.lookup_in_cache("subsidiaries", record["subsidiaryName"])
             if sub_id:
-                return sub_id, None
-            return None, f"Subsidiary name {record['subsidiaryName']} not found in Rillet"
-        return None, None
+                return sub_id
+            raise ValueError(f"Subsidiary name {record['subsidiaryName']} not found in Rillet")
+        raise ValueError(f"One of subsidiaryId or subsidiaryName is required for record {record}")
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
         """Map a unified JournalEntry record to the Rillet API payload."""
@@ -110,10 +106,7 @@ class JournalsSink(RilletSink):
         if record.get("id"):
             payload["id"] = record["id"]
 
-        name, err = self._resolve_name(record)
-        if err:
-            payload["error"] = err
-            return payload
+        name = self._resolve_name(record)
         payload["name"] = name
 
         currency = record.get("currency", "USD")
@@ -122,17 +115,11 @@ class JournalsSink(RilletSink):
 
         line_items = []
         for item in record.get("lineItems") or []:
-            line_item, err = self._build_line_item(item, currency)
-            if err:
-                payload["error"] = err
-                return payload
+            line_item = self._build_line_item(item, currency)
             line_items.append(line_item)
         payload["items"] = line_items
 
-        subsidiary_id, err = self._resolve_subsidiary(record)
-        if err:
-            payload["error"] = err
-            return payload
+        subsidiary_id = self._resolve_subsidiary(record)
         if subsidiary_id:
             payload["subsidiary_id"] = subsidiary_id
 
@@ -140,10 +127,6 @@ class JournalsSink(RilletSink):
 
     def upsert_record(self, record: dict, context: dict):
         """Create or update a journal entry in Rillet."""
-        
-        if "error" in record:
-            return None, False, {"error": record["error"]}
-
         method = "POST"
         endpoint = self.endpoint
 
