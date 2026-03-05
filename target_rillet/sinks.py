@@ -1,5 +1,7 @@
 """Rillet target sink class, which handles writing streams."""
 
+from __future__ import annotations
+
 from target_rillet.client import RilletSink
 
 class JournalsSink(RilletSink):
@@ -106,8 +108,7 @@ class JournalsSink(RilletSink):
         if record.get("id"):
             payload["id"] = record["id"]
 
-        name = self._resolve_name(record)
-        payload["name"] = name
+        payload["name"] = self._resolve_name(record)
 
         currency = record.get("currency", "USD")
         payload["currency"] = currency
@@ -119,23 +120,24 @@ class JournalsSink(RilletSink):
             line_items.append(line_item)
         payload["items"] = line_items
 
-        subsidiary_id = self._resolve_subsidiary(record)
-        if subsidiary_id:
-            payload["subsidiary_id"] = subsidiary_id
+        payload["subsidiary_id"] = self._resolve_subsidiary(record)
 
         return payload
 
     def upsert_record(self, record: dict, context: dict):
         """Create or update a journal entry in Rillet."""
+        state_updates = dict()
         method = "POST"
         endpoint = self.endpoint
 
         if record.get("id"):
+            id = record.pop("id")
+            state_updates["is_updated"] = True
             method = "PUT"
-            endpoint = f"{self.endpoint}/{record['id']}"
+            endpoint = f"{self.endpoint}/{id}"
 
         response = self.request_api(method, endpoint=endpoint, request_data=record)
         if response.status_code in [200, 201]:
-            return response.json().get("id"), True, {}
-        else:
-            return None, False, response.json()
+            return response.json().get("id"), True, state_updates
+
+        return None, False, response.json()

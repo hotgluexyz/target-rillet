@@ -1,5 +1,7 @@
 """Rillet target sink base client."""
 
+from __future__ import annotations
+
 from typing import Dict, List, Optional
 
 import requests
@@ -55,6 +57,7 @@ class RilletSink(HotglueSink):
             json=request_data,
             headers=merged_headers,
         )
+        response.raise_for_status()
         return response
     
     def _refresh_lookup_cache(self, lookup_name: str) -> None:
