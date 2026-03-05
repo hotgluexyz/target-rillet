@@ -137,7 +137,4 @@ class JournalsSink(RilletSink):
             endpoint = f"{self.endpoint}/{id}"
 
         response = self.request_api(method, endpoint=endpoint, request_data=record)
-        if response.status_code in [200, 201]:
-            return response.json().get("id"), True, state_updates
-
-        return None, False, response.json()
+        return response.json().get("id"), True, state_updates
