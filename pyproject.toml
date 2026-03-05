@@ -12,7 +12,7 @@ license = "Apache 2.0"
 [tool.poetry.dependencies]
 python = "<3.11,>=3.7.1"
 requests = "^2.25.1"
-hotglue-singer-sdk = "^1.0.3"
+hotglue-singer-sdk = "^1.0.11"
 
 [tool.poetry.dev-dependencies]
 pytest = "^6.2.5"
