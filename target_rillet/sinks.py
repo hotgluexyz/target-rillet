@@ -100,7 +100,6 @@ class JournalsSink(RilletSink):
             if sub_id:
                 return sub_id
             raise ValueError(f"Subsidiary name {record['subsidiaryName']} not found in Rillet")
-        raise ValueError(f"One of subsidiaryId or subsidiaryName is required for record {record}")
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
         """Map a unified JournalEntry record to the Rillet API payload."""
@@ -120,7 +119,9 @@ class JournalsSink(RilletSink):
             line_items.append(line_item)
         payload["items"] = line_items
 
-        payload["subsidiary_id"] = self._resolve_subsidiary(record)
+        subsidiary_id = self._resolve_subsidiary(record)
+        if subsidiary_id:
+            payload["subsidiary_id"] = subsidiary_id
 
         return payload
 
