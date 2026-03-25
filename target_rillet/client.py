@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 import requests
 from hotglue_singer_sdk.plugin_base import PluginBase
 from hotglue_singer_sdk.target_sdk.client import HotglueSink
+from hotglue_etl_exceptions import InvalidCredentialsError, InvalidPayloadError
 
 
 class RilletSink(HotglueSink):
@@ -57,8 +58,28 @@ class RilletSink(HotglueSink):
             json=request_data,
             headers=merged_headers,
         )
-        response.raise_for_status()
+        self.validate_response(response)
         return response
+
+    def get_error_message(self, response: requests.Response) -> str:
+        try:
+            json_data = response.json()
+            if "violations" in json_data and type(json_data["violations"]) == list:
+                messages = [item.get("field") + ": " + item.get("message") for item in json_data["violations"]]
+                error_message = "\n".join(messages)
+            else:
+                error_message = json_data["message"]
+        except Exception:
+            error_message = response.text
+        return error_message
+    
+    def validate_response(self, response: requests.Response) -> None:
+        if response.status_code in [401, 403]:
+            raise InvalidCredentialsError(self.get_error_message(response))
+        elif response.status_code == 400:
+            self.logger.error("Invalid payload. Body sent: %s", response.request.body)
+            raise InvalidPayloadError(self.get_error_message(response))
+        super().validate_response(response)
     
     def _refresh_lookup_cache(self, lookup_name: str) -> None:
         """Fetch a resource list from Rillet and build a name→value lookup cache."""
