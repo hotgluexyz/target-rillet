@@ -65,7 +65,9 @@ class RilletSink(HotglueSink):
         try:
             json_data = response.json()
             if "violations" in json_data and type(json_data["violations"]) == list:
-                messages = [item.get("field") + ": " + item.get("message") for item in json_data["violations"]]
+                messages = [
+                    f"{item.get('field') or ''}: {item.get('message') or ''}" for item in json_data["violations"]
+                ]
                 error_message = "\n".join(messages)
             else:
                 error_message = json_data["message"]
