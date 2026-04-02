@@ -15,7 +15,10 @@ class RilletSink(HotglueSink):
 
     base_url = "https://api.rillet.com"
     endpoint = ""
-    api_version = "2"
+
+    @property
+    def api_version(self) -> str:
+        return self.config.get("api_version", "2")
 
     LOOKUPS = {
         "accounts": {"endpoint": "/accounts", "collection": "accounts", "key": "name", "value": "code"},
