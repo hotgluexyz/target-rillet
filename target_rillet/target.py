@@ -4,6 +4,7 @@ from hotglue_singer_sdk import typing as th
 from hotglue_singer_sdk.target_sdk.target import TargetHotglue
 from target_rillet.sinks import (
     JournalsSink,
+    FallbackSink,
 )
 
 
@@ -27,7 +28,15 @@ class TargetRillet(TargetHotglue):
 
     SINK_TYPES = [
         JournalsSink,
+        FallbackSink,
     ]
+
+    def get_sink_class(self, stream_name: str) -> Type[Sink]:
+        """Get sink for a stream."""
+        sink_class = super().get_sink_class(stream_name)
+        if sink_class:
+            return sink_class
+        return FallbackSink
 
 
 if __name__ == "__main__":
