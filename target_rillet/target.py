@@ -35,9 +35,12 @@ class TargetRillet(TargetHotglue):
 
     def get_sink_class(self, stream_name: str) -> Type[Sink]:
         """Get sink for a stream."""
-        sink_class = super().get_sink_class(stream_name)
-        if sink_class:
-            return sink_class
+        stream_lower = stream_name.lower()
+        for sink_class in self.SINK_TYPES:
+            # Class-level str (e.g. JournalsSink.name); @property on class is not a str.
+            sink_name = getattr(sink_class, "name", None)
+            if isinstance(sink_name, str) and sink_name.lower() == stream_lower:
+                return sink_class
         return FallbackSink
 
 

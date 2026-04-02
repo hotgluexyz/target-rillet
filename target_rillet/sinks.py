@@ -151,6 +151,9 @@ class FallbackSink(RilletSink):
     def endpoint(self) -> str:
         return f"/{self.stream_name}"
     
+    def preprocess_record(self, record: dict, context: dict) -> dict:
+        """Handle errors by posting to the fallback sink."""
+        return record
 
     def upsert_record(self, record: dict, context: dict):
         """Handle errors by posting to the fallback sink."""
