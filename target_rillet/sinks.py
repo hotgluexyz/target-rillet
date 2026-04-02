@@ -139,3 +139,20 @@ class JournalsSink(RilletSink):
 
         response = self.request_api(method, endpoint=endpoint, request_data=record)
         return response.json().get("id"), True, state_updates
+
+class FallbackSink(RilletSink):
+    """Fallback sink for handling errors."""
+
+    @property
+    def name(self) -> str:
+        return self.stream_name
+
+    @property
+    def endpoint(self) -> str:
+        return f"/{self.stream_name}"
+    
+
+    def upsert_record(self, record: dict, context: dict):
+        """Handle errors by posting to the fallback sink."""
+        response = self.request_api("POST", endpoint=self.endpoint, request_data=record)
+        return response.json().get("id"), True, {}
