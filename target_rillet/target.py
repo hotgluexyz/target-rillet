@@ -35,8 +35,7 @@ class TargetRillet(TargetHotglue):
     ).to_dict()
 
     SINK_TYPES = [
-        JournalsSink,
-        FallbackSink,
+        JournalsSink
     ]
 
     def get_sink_class(self, stream_name: str) -> Type[Sink]:
