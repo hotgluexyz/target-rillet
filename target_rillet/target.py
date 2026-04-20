@@ -26,6 +26,12 @@ class TargetRillet(TargetHotglue):
             description="Use the Rillet sandbox environment",
             default=False,
         ),
+        th.Property(
+            "api_version",
+            th.StringType,
+            description="The Rillet API version to use",
+            default="2",
+        ),
     ).to_dict()
 
     SINK_TYPES = [
