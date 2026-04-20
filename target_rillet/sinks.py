@@ -125,20 +125,35 @@ class JournalsSink(RilletSink):
 
         return payload
 
-    def upsert_record(self, record: dict, context: dict):
-        """Create or update a journal entry in Rillet."""
-        state_updates = dict()
-        method = "POST"
-        endpoint = self.endpoint
 
-        if record.get("id"):
-            id = record.pop("id")
-            state_updates["is_updated"] = True
-            method = "PUT"
-            endpoint = f"{self.endpoint}/{id}"
+class BillsSink(RilletSink):
+    name = "Bills"
+    endpoint = "/bills"
 
-        response = self.request_api(method, endpoint=endpoint, request_data=record)
-        return response.json().get("id"), True, state_updates
+    def preprocess_record(self, record: dict, context: dict) -> dict:
+        """Map a unified JournalEntry record to the Rillet API payload."""
+        payload = {
+            "vendor_id": record.get("vendorId"),
+            "expense_number": record.get("billNumber"),
+            "bill_date": record.get("issueDate"),
+            "due_date": record.get("dueDate"),
+            "subsidiary_id": record.get("subsidiaryId")
+        }
+
+        expenses = []
+        for expense in record.get("expenses"):
+            expenses.append({
+                "description": expense.get("description"),
+                "account_code": expense.get("accountNumber"),
+                "amount": {
+                    "amount": expense.get("amount"),
+                    "currency": record.get("currency")
+                }
+            })
+
+        payload["items"] = expenses
+        return payload
+
 
 class FallbackSink(RilletSink):
     """Fallback sink for handling errors."""
@@ -154,8 +169,3 @@ class FallbackSink(RilletSink):
     def preprocess_record(self, record: dict, context: dict) -> dict:
         """Handle errors by posting to the fallback sink."""
         return record
-
-    def upsert_record(self, record: dict, context: dict):
-        """Handle errors by posting to the fallback sink."""
-        response = self.request_api("POST", endpoint=self.endpoint, request_data=record)
-        return response.json().get("id"), True, {}
