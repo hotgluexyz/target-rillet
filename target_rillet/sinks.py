@@ -142,7 +142,7 @@ class BillsSink(RilletSink):
         }
 
         expenses = []
-        for expense in record.get("expenses"):
+        for expense in record.get("expenses", []):
             expenses.append({
                 "description": expense.get("description"),
                 "account_code": expense.get("accountNumber"),
