@@ -138,8 +138,10 @@ class BillsSink(RilletSink):
             "bill_date": record.get("issueDate"),
             "due_date": record.get("dueDate"),
             "subsidiary_id": record.get("subsidiaryId"),
-            "id": record.get("id")
         }
+
+        if record.get("id"):
+            payload["id"] = record["id"]
 
         expenses = []
         for expense in record.get("expenses", []):
