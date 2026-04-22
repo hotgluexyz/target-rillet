@@ -101,3 +101,19 @@ class RilletSink(HotglueSink):
         if lookup_name not in self._lookup_cache:
             self._refresh_lookup_cache(lookup_name)
         return self._lookup_cache.get(lookup_name, {}).get(key)
+
+
+    def upsert_record(self, record: dict, context: dict):
+        """Create or update a journal entry in Rillet."""
+        state_updates = dict()
+        method = "POST"
+        endpoint = self.endpoint
+
+        if record.get("id"):
+            id = record.pop("id")
+            state_updates["is_updated"] = True
+            method = "PUT"
+            endpoint = f"{self.endpoint}/{id}"
+
+        response = self.request_api(method, endpoint=endpoint, request_data=record)
+        return response.json().get("id"), True, state_updates
