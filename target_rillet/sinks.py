@@ -1,8 +1,11 @@
 """Rillet target sink class, which handles writing streams."""
 
 from __future__ import annotations
+from audioop import mul
 
 from target_rillet.client import RilletSink
+import requests
+
 
 class JournalsSink(RilletSink):
     """Rillet target sink for posting journal entries."""
@@ -138,6 +141,7 @@ class BillsSink(RilletSink):
             "bill_date": record.get("issueDate"),
             "due_date": record.get("dueDate"),
             "subsidiary_id": record.get("subsidiaryId"),
+            "attachments": record.get("attachments", []),
         }
 
         if record.get("id"):
@@ -156,6 +160,36 @@ class BillsSink(RilletSink):
 
         payload["items"] = expenses
         return payload
+
+    def post_attachment(self, bill_id: str, attachment: dict):
+        """Post an attachment to a bill."""
+        attachment_url = attachment.get("url")
+        if not attachment_url:
+            raise ValueError("Attachment URL is required")
+        
+        # get the attachment from the url
+        attachment = requests.get(attachment_url).content
+
+        # send the attachment as a multipart/form-data request
+        files = {"file": (f"{bill_id}.pdf", attachment, "application/pdf")}
+        multipart_headers = {
+            "Authorization": f"Bearer {self.config.get('api_key')}",
+            "X-Rillet-API-Version": self.api_version,
+        }
+        response = requests.post(f"{self.get_base_url()}{self.endpoint}/{bill_id}", files=files, headers=multipart_headers)
+        return
+
+    def upsert_record(self, record: dict, context: dict):
+        """Create or update a journal entry in Rillet."""
+        attachments = record.pop("attachments", [])
+        id, success, state_updates = super().upsert_record(record, context)
+
+        if id and attachments:
+            # add attachment to the bill
+            for attachment in attachments:
+                self.post_attachment(id, attachment)
+
+        return id, success, state_updates
 
 
 class FallbackSink(RilletSink):
