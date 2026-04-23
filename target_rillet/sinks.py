@@ -168,10 +168,19 @@ class BillsSink(RilletSink):
             raise ValueError("Attachment URL is required")
         
         # get the attachment from the url
-        attachment = requests.get(attachment_url).content
+        resp = requests.get(attachment_url)
+        content = resp.content
+        content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+
+        if content_type == "application/pdf" or content[:4] == b"%PDF":
+            filename = f"{bill_id}.pdf"
+        elif "spreadsheetml" in content_type or content_type == "application/vnd.ms-excel":
+            filename = f"{bill_id}.xlsx"
+        else:
+            filename = f"{bill_id}.bin"
 
         # send the attachment as a multipart/form-data request
-        files = {"file": (f"{bill_id}.pdf", attachment, "application/pdf")}
+        files = {"file": (filename, content, "application/pdf")}
         multipart_headers = {
             "Authorization": f"Bearer {self.config.get('api_key')}",
             "X-Rillet-API-Version": self.api_version,
