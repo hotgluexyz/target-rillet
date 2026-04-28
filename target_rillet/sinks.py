@@ -162,7 +162,7 @@ class BillsSink(RilletSink):
             return f"{bill_id}_{attachment['name']}"
         if attachment.get("id"):
             return f"{bill_id}_{attachment['id']}"
-        raise f"{bill_id}_{index}"
+        return f"{bill_id}_{index}"
 
     def post_attachment(self, bill_id: str, attachment: dict, index: int):
         """Post an attachment to a bill."""
