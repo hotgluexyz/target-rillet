@@ -138,8 +138,6 @@ class BillsSink(RilletSink):
 
         if not record.get("subsidiaryId"):
             subsidiary_id = self._resolve_subsidiary(record)
-            if not subsidiary_id:
-                raise ValueError(f"Subsidiary name {record.gett('subsidiaryName')} not found in Rillet")
             payload["subsidiary_id"] = subsidiary_id
         
         # add external references from custom fields
