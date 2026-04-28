@@ -94,16 +94,6 @@ class JournalsSink(RilletSink):
 
         return line_item
 
-    def _resolve_subsidiary(self, record: dict) -> str:
-        """Resolve subsidiary ID from direct ID or cached name lookup."""
-        if record.get("subsidiaryId"):
-            return record["subsidiaryId"]
-        if record.get("subsidiaryName"):
-            sub_id = self.lookup_in_cache("subsidiaries", record["subsidiaryName"])
-            if sub_id:
-                return sub_id
-            raise ValueError(f"Subsidiary name {record['subsidiaryName']} not found in Rillet")
-
     def preprocess_record(self, record: dict, context: dict) -> dict:
         """Map a unified JournalEntry record to the Rillet API payload."""
         payload = {}
@@ -147,6 +137,12 @@ class BillsSink(RilletSink):
         if record.get("id"):
             payload["id"] = record["id"]
 
+        if not record.get("subsidiaryId"):
+            subsidiary_id = self._resolve_subsidiary(record)
+            if not subsidiary_id:
+                raise ValueError(f"Subsidiary name {record['subsidiaryName']} not found in Rillet")
+            payload["subsidiary_id"] = subsidiary_id
+
         expenses = []
         for expense in record.get("expenses", []):
             expenses.append({
@@ -160,8 +156,15 @@ class BillsSink(RilletSink):
 
         payload["items"] = expenses
         return payload
+    
+    def get_attachment_name(self, bill_id: str, attachment: str, index: int) -> str:
+        if attachment.get("name"):
+            return f"{bill_id}_{attachment['name']}"
+        if attachment.get("id"):
+            return f"{bill_id}_{attachment['id']}"
+        raise f"{bill_id}_{index}"
 
-    def post_attachment(self, bill_id: str, attachment: dict):
+    def post_attachment(self, bill_id: str, attachment: dict, index: int):
         """Post an attachment to a bill."""
         attachment_url = attachment.get("url")
         if not attachment_url:
@@ -172,15 +175,17 @@ class BillsSink(RilletSink):
         content = resp.content
         content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
 
+        att_name = self.get_attachment_name(bill_id, attachment, index)
+
         if content_type == "application/pdf" or content[:4] == b"%PDF":
-            filename = f"{bill_id}.pdf"
+            filename, content_type = f"{att_name}.pdf", "application/pdf"
         elif "spreadsheetml" in content_type or content_type == "application/vnd.ms-excel":
-            filename = f"{bill_id}.xlsx"
+            filename, content_type = f"{att_name}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         else:
-            filename = f"{bill_id}.bin"
+            filename, content_type = f"{att_name}.bin", "application/octet-stream"
 
         # send the attachment as a multipart/form-data request
-        files = {"file": (filename, content, "application/pdf")}
+        files = {"file": (filename, content, content_type)}
         multipart_headers = {
             "Authorization": f"Bearer {self.config.get('api_key')}",
             "X-Rillet-API-Version": self.api_version,
@@ -195,8 +200,8 @@ class BillsSink(RilletSink):
 
         if id and attachments:
             # add attachment to the bill
-            for attachment in attachments:
-                self.post_attachment(id, attachment)
+            for index, attachment in enumerate(attachments):
+                self.post_attachment(id, attachment, index)
 
         return id, success, state_updates
 

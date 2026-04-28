@@ -117,3 +117,13 @@ class RilletSink(HotglueSink):
 
         response = self.request_api(method, endpoint=endpoint, request_data=record)
         return response.json().get("id"), True, state_updates
+
+    def _resolve_subsidiary(self, record: dict) -> str:
+        """Resolve subsidiary ID from direct ID or cached name lookup."""
+        if record.get("subsidiaryId"):
+            return record["subsidiaryId"]
+        if record.get("subsidiaryName"):
+            sub_id = self.lookup_in_cache("subsidiaries", record["subsidiaryName"])
+            if sub_id:
+                return sub_id
+            raise ValueError(f"Subsidiary name {record['subsidiaryName']} not found in Rillet")
