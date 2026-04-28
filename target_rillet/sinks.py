@@ -159,7 +159,7 @@ class BillsSink(RilletSink):
         payload["items"] = expenses
         return payload
     
-    def get_attachment_name(self, bill_id: str, attachment: str, index: int) -> str:
+    def get_attachment_name(self, bill_id: str, attachment: dict, index: int) -> str:
         if attachment.get("name"):
             return f"{bill_id}_{attachment['name']}"
         if attachment.get("id"):
