@@ -1,7 +1,6 @@
 """Rillet target sink class, which handles writing streams."""
 
 from __future__ import annotations
-from audioop import mul
 
 from target_rillet.client import RilletSink
 import requests
@@ -140,7 +139,7 @@ class BillsSink(RilletSink):
         if not record.get("subsidiaryId"):
             subsidiary_id = self._resolve_subsidiary(record)
             if not subsidiary_id:
-                raise ValueError(f"Subsidiary name {record['subsidiaryName']} not found in Rillet")
+                raise ValueError(f"Subsidiary name {record.gett('subsidiaryName')} not found in Rillet")
             payload["subsidiary_id"] = subsidiary_id
         
         # add external references from custom fields
@@ -196,6 +195,7 @@ class BillsSink(RilletSink):
             "X-Rillet-API-Version": self.api_version,
         }
         response = requests.post(f"{self.get_base_url()}{self.endpoint}/{bill_id}", files=files, headers=multipart_headers)
+        self.validate_response(response)
         return
 
     def upsert_record(self, record: dict, context: dict):
