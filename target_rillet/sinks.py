@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from target_rillet.client import RilletSink
+import requests
+
 
 class JournalsSink(RilletSink):
     """Rillet target sink for posting journal entries."""
@@ -91,16 +93,6 @@ class JournalsSink(RilletSink):
 
         return line_item
 
-    def _resolve_subsidiary(self, record: dict) -> str:
-        """Resolve subsidiary ID from direct ID or cached name lookup."""
-        if record.get("subsidiaryId"):
-            return record["subsidiaryId"]
-        if record.get("subsidiaryName"):
-            sub_id = self.lookup_in_cache("subsidiaries", record["subsidiaryName"])
-            if sub_id:
-                return sub_id
-            raise ValueError(f"Subsidiary name {record['subsidiaryName']} not found in Rillet")
-
     def preprocess_record(self, record: dict, context: dict) -> dict:
         """Map a unified JournalEntry record to the Rillet API payload."""
         payload = {}
@@ -138,10 +130,20 @@ class BillsSink(RilletSink):
             "bill_date": record.get("issueDate"),
             "due_date": record.get("dueDate"),
             "subsidiary_id": record.get("subsidiaryId"),
+            "attachments": record.get("attachments", []),
         }
 
         if record.get("id"):
             payload["id"] = record["id"]
+
+        if not record.get("subsidiaryId"):
+            subsidiary_id = self._resolve_subsidiary(record)
+            payload["subsidiary_id"] = subsidiary_id
+        
+        # add external references from custom fields
+        for custom_field in record.get("customFields", []):
+            if custom_field.get("name") == "external_references":
+                payload["external_references"] = custom_field.get("value")
 
         expenses = []
         for expense in record.get("expenses", []):
@@ -156,6 +158,55 @@ class BillsSink(RilletSink):
 
         payload["items"] = expenses
         return payload
+    
+    def get_attachment_name(self, bill_id: str, attachment: dict, index: int) -> str:
+        if attachment.get("name"):
+            return f"{bill_id}_{attachment['name']}"
+        if attachment.get("id"):
+            return f"{bill_id}_{attachment['id']}"
+        return f"{bill_id}_{index}"
+
+    def post_attachment(self, bill_id: str, attachment: dict, index: int):
+        """Post an attachment to a bill."""
+        attachment_url = attachment.get("url")
+        if not attachment_url:
+            raise ValueError("Attachment URL is required")
+        
+        # get the attachment from the url
+        resp = requests.get(attachment_url)
+        content = resp.content
+        content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+
+        att_name = self.get_attachment_name(bill_id, attachment, index)
+
+        if content_type == "application/pdf" or content[:4] == b"%PDF":
+            filename, content_type = f"{att_name}.pdf", "application/pdf"
+        elif "spreadsheetml" in content_type or content_type == "application/vnd.ms-excel":
+            filename, content_type = f"{att_name}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        else:
+            filename, content_type = f"{att_name}.bin", "application/octet-stream"
+
+        # send the attachment as a multipart/form-data request
+        files = {"file": (filename, content, content_type)}
+        multipart_headers = {
+            "Authorization": f"Bearer {self.config.get('api_key')}",
+            "X-Rillet-API-Version": self.api_version,
+        }
+        response = requests.post(f"{self.get_base_url()}{self.endpoint}/{bill_id}", files=files, headers=multipart_headers)
+        self.validate_response(response)
+        return
+
+    def upsert_record(self, record: dict, context: dict):
+        """Create or update a journal entry in Rillet."""
+        attachments = record.pop("attachments", [])
+        id, success, state_updates = super().upsert_record(record, context)
+
+        if id and attachments:
+            # add attachment to the bill
+            for index, attachment in enumerate(attachments):
+                self.post_attachment(id, attachment, index)
+
+        return id, success, state_updates
 
 
 class FallbackSink(RilletSink):
