@@ -148,7 +148,8 @@ class BillsSink(RilletSink):
 
         expenses = []
         default_gl_code = self.config.get("default_gl_code")
-        for expense in record.get("expenses", []):
+        all_lines = record.get("expenses", []) + (record.get("lineItems", []))
+        for expense in all_lines:
             expenses.append({
                 "description": expense.get("description"),
                 "account_code": expense.get("accountNumber") or default_gl_code,
