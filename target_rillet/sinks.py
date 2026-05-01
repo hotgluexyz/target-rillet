@@ -201,10 +201,13 @@ class BillsSink(RilletSink):
         attachments = record.pop("attachments", [])
         id, success, state_updates = super().upsert_record(record, context)
 
-        if id and attachments:
-            # add attachment to the bill
-            for index, attachment in enumerate(attachments):
-                self.post_attachment(id, attachment, index)
+        try:
+            if id and attachments:
+                # add attachment to the bill
+                for index, attachment in enumerate(attachments):
+                    self.post_attachment(id, attachment, index)
+        except Exception as e:
+            self.logger.info(f"Error posting attachments to bill {id}: {e}")
 
         return id, success, state_updates
 
