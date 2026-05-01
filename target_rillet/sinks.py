@@ -143,8 +143,8 @@ class BillsSink(RilletSink):
         
         # add external references from custom fields
         for custom_field in record.get("customFields", []):
-            if custom_field.get("name") == "external_references":
-                payload["external_references"] = custom_field.get("value")
+            custom_fields = {field["name"]: field["value"] for field in custom_field.get("value", [])}
+            payload.update(custom_fields)
 
         expenses = []
         default_gl_code = self.config.get("default_gl_code")
