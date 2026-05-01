@@ -142,8 +142,8 @@ class BillsSink(RilletSink):
             payload["subsidiary_id"] = subsidiary_id
         
         # add external references from custom fields
-        for custom_field in record.get("customFields", []):
-            custom_fields = {field["name"]: field["value"] for field in custom_field.get("value", [])}
+        if record.get("customFields", []):
+            custom_fields = {field["name"]: field["value"] for field in record.get("customFields")}
             payload.update(custom_fields)
 
         expenses = []
