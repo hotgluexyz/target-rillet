@@ -131,6 +131,7 @@ class BillsSink(RilletSink):
             "due_date": record.get("dueDate"),
             "subsidiary_id": record.get("subsidiaryId"),
             "attachments": record.get("attachments", []),
+            "description": record.get("description")
         }
 
         if record.get("id"):
@@ -141,15 +142,17 @@ class BillsSink(RilletSink):
             payload["subsidiary_id"] = subsidiary_id
         
         # add external references from custom fields
-        for custom_field in record.get("customFields", []):
-            if custom_field.get("name") == "external_references":
-                payload["external_references"] = custom_field.get("value")
+        if record.get("customFields", []):
+            custom_fields = {field["name"]: field["value"] for field in record.get("customFields")}
+            payload.update(custom_fields)
 
         expenses = []
-        for expense in record.get("expenses", []):
+        default_gl_code = self.config.get("default_gl_code")
+        all_lines = record.get("expenses", []) + (record.get("lineItems", []))
+        for expense in all_lines:
             expenses.append({
                 "description": expense.get("description"),
-                "account_code": expense.get("accountNumber"),
+                "account_code": expense.get("accountNumber") or default_gl_code,
                 "amount": {
                     "amount": expense.get("amount"),
                     "currency": record.get("currency")
@@ -161,9 +164,9 @@ class BillsSink(RilletSink):
     
     def get_attachment_name(self, bill_id: str, attachment: dict, index: int) -> str:
         if attachment.get("name"):
-            return f"{bill_id}_{attachment['name']}"
+            return f"{attachment['name']}"
         if attachment.get("id"):
-            return f"{bill_id}_{attachment['id']}"
+            return f"{attachment['id']}"
         return f"{bill_id}_{index}"
 
     def post_attachment(self, bill_id: str, attachment: dict, index: int):
