@@ -161,13 +161,6 @@ class BillsSink(RilletSink):
 
         payload["items"] = expenses
         return payload
-    
-    def get_attachment_name(self, bill_id: str, attachment: dict, index: int) -> str:
-        if attachment.get("name"):
-            return f"{attachment['name']}"
-        if attachment.get("id"):
-            return f"{attachment['id']}"
-        return f"{bill_id}_{index}"
 
     def post_attachment(self, bill_id: str, attachment: dict, index: int):
         """Post an attachment to a bill."""
@@ -180,17 +173,15 @@ class BillsSink(RilletSink):
         content = resp.content
         content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
 
-        att_name = self.get_attachment_name(bill_id, attachment, index)
-
         if content_type == "application/pdf" or content[:4] == b"%PDF":
-            filename, content_type = f"{att_name}.pdf", "application/pdf"
+            content_type = "application/pdf"
         elif "spreadsheetml" in content_type or content_type == "application/vnd.ms-excel":
-            filename, content_type = f"{att_name}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         else:
-            filename, content_type = f"{att_name}.bin", "application/octet-stream"
+            content_type = "application/octet-stream"
 
         # send the attachment as a multipart/form-data request
-        files = {"file": (filename, content, content_type)}
+        files = {"file": ("file", content, content_type)}
         multipart_headers = {
             "Authorization": f"Bearer {self.config.get('api_key')}",
             "X-Rillet-API-Version": self.api_version,
