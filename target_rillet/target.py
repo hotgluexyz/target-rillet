@@ -7,7 +7,8 @@ from hotglue_singer_sdk.sinks import Sink
 from target_rillet.sinks import (
     JournalsSink,
     FallbackSink,
-    BillsSink
+    BillsSink,
+    ChargesSink
 )
 
 
@@ -38,6 +39,7 @@ class TargetRillet(TargetHotglue):
     SINK_TYPES = [
         JournalsSink,
         BillsSink,
+        ChargesSink,
     ]
 
     def get_sink_class(self, stream_name: str) -> Type[Sink]:

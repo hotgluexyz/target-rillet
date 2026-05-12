@@ -228,4 +228,16 @@ class FallbackSink(RilletSink):
     
     def preprocess_record(self, record: dict, context: dict) -> dict:
         """Handle errors by posting to the fallback sink."""
+        record["subsidiary_id"] = self._resolve_subsidiary(record)
         return record
+
+
+class ChargesSink(FallbackSink):
+    name = "charges"
+
+    def preprocess_record(self, record: dict, context: dict) -> dict:
+        record = super().preprocess_record(record, context)
+        # add default credit card account code
+        record["credit_card_account_code"] = self.config.get("default_credit_card_account_code")
+        return record
+
