@@ -240,10 +240,6 @@ class BankTransactionsSink(FallbackSink):
             "objectName": "bank-accounts",
         },
     ]
-
-    def preprocess_record(self, record: dict, context: dict) -> dict:
-        record = super().preprocess_record(record, context)
-        return record
     
     def upsert_record(self, record: dict, context: dict):
         try:
@@ -251,7 +247,7 @@ class BankTransactionsSink(FallbackSink):
         except Exception as e:
             if "bank_account_id: JSON parse error" in str(e):
                 raise ValueError(f"bank_account_id {record.get('bank_account_id')} is not valid")
-        raise e
+            raise e
 
 
 class ChargesSink(FallbackSink):
