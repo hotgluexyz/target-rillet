@@ -228,8 +228,30 @@ class FallbackSink(RilletSink):
     
     def preprocess_record(self, record: dict, context: dict) -> dict:
         """Handle errors by posting to the fallback sink."""
-        record["subsidiary_id"] = self._resolve_subsidiary(record)
+        record["subsidiary_id"] = record.get("subsidiary_id") or self._resolve_subsidiary(record)
         return record
+
+
+class BankTransactionsSink(FallbackSink):
+    name = "bank-transactions"
+    relation_fields = [
+        {
+            "field": "bank_account_id",
+            "objectName": "bank-accounts",
+        },
+    ]
+
+    def preprocess_record(self, record: dict, context: dict) -> dict:
+        record = super().preprocess_record(record, context)
+        return record
+    
+    def upsert_record(self, record: dict, context: dict):
+        try:
+            return super().upsert_record(record, context)
+        except Exception as e:
+            if "bank_account_id: JSON parse error" in str(e):
+                raise ValueError(f"bank_account_id {record.get('bank_account_id')} is not valid")
+        raise e
 
 
 class ChargesSink(FallbackSink):
