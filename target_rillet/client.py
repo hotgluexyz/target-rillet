@@ -8,6 +8,7 @@ import requests
 from hotglue_singer_sdk.plugin_base import PluginBase
 from hotglue_singer_sdk.target_sdk.client import HotglueSink
 from hotglue_etl_exceptions import InvalidCredentialsError, InvalidPayloadError
+from hotglue_singer_sdk.exceptions import RetriableAPIError
 
 
 class RilletSink(HotglueSink):
@@ -80,6 +81,8 @@ class RilletSink(HotglueSink):
         if response.status_code in [401, 403]:
             raise InvalidCredentialsError(self.get_error_message(response))
         elif response.status_code == 400:
+            if "Expense is missing an exchange rate" in response.text and self.name == "Bills":
+                raise RetriableAPIError(self.get_error_message(response))
             self.logger.error("Invalid payload. Body sent: %s", response.request.body)
             raise InvalidPayloadError(self.get_error_message(response))
         super().validate_response(response)
