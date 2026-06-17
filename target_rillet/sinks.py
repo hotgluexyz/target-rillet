@@ -121,6 +121,12 @@ class JournalsSink(RilletSink):
 class BillsSink(RilletSink):
     name = "Bills"
     endpoint = "/bills"
+    relation_fields = [
+        {
+            "field": "vendorId",
+            "objectName": "vendors",
+        },
+    ]
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
         """Map a unified JournalEntry record to the Rillet API payload."""
@@ -253,6 +259,13 @@ class BankTransactionsSink(FallbackSink):
 class ChargesSink(FallbackSink):
     name = "charges"
 
+    relation_fields = [
+        {
+            "field": "vendor_id",
+            "objectName": "vendors",
+        },
+    ]
+
     def preprocess_record(self, record: dict, context: dict) -> dict:
         record = super().preprocess_record(record, context)
         # add default credit card account code
@@ -260,3 +273,14 @@ class ChargesSink(FallbackSink):
             raise ValueError("default_credit_card_account_code is a required field for charges sink, please provide it in the config.")
         record["credit_card_account_code"] = self.config.get("default_credit_card_account_code")
         return record
+
+
+class ReimbursementsSink(FallbackSink):
+    name = "reimbursements"
+
+    relation_fields = [
+        {
+            "field": "vendor_id",
+            "objectName": "vendors",
+        },
+    ]
