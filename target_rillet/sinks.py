@@ -258,6 +258,7 @@ class BankTransactionsSink(FallbackSink):
 
 class ChargesSink(FallbackSink):
     name = "charges"
+    allows_upserts = False
 
     relation_fields = [
         {
@@ -277,6 +278,7 @@ class ChargesSink(FallbackSink):
 
 class ReimbursementsSink(FallbackSink):
     name = "reimbursements"
+    allows_upserts = False
 
     relation_fields = [
         {
