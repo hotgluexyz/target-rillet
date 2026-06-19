@@ -16,6 +16,7 @@ class RilletSink(HotglueSink):
 
     base_url = "https://api.rillet.com"
     endpoint = ""
+    allows_upserts = True
 
     @property
     def api_version(self) -> str:
@@ -112,11 +113,15 @@ class RilletSink(HotglueSink):
         method = "POST"
         endpoint = self.endpoint
 
-        if record.get("id"):
+        if record.get("id") and self.allows_upserts:
             id = record.pop("id")
             state_updates["is_updated"] = True
             method = "PUT"
             endpoint = f"{self.endpoint}/{id}"
+        
+        if record.get("id") and not self.allows_upserts:
+            self.logger.warning(f"Record {record.get('id')} for {self.name} sink already exists in Rillet and upserts are not allowed. Skipping...")
+            return record.get("id"), True, {"existing": True}
 
         response = self.request_api(method, endpoint=endpoint, request_data=record)
         return response.json().get("id"), True, state_updates
