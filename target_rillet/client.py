@@ -152,4 +152,9 @@ class RilletSink(HotglueSink):
             if account_code:
                 return account_code
             raise ValueError(f"Account id {record['accountId']} not found in Rillet")
-        raise ValueError(f"One of accountNumber or accountName is required for record {record}")
+        if record.get("accountName"):
+            account_code = self.lookup_in_cache("accounts", record["accountName"])
+            if account_code:
+                return account_code
+            raise ValueError(f"Account name {record['accountName']} not found in Rillet")
+        raise ValueError(f"One of accountNumber, accountId or accountName is required for record {record}")
