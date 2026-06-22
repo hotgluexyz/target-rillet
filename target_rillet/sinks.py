@@ -153,12 +153,12 @@ class BillsSink(RilletSink):
             payload.update(custom_fields)
 
         expenses = []
-        default_gl_code = self.config.get("default_gl_code")
         all_lines = record.get("expenses", []) + (record.get("lineItems", []))
         for expense in all_lines:
+            account_number = self._resolve_account(expense)
             expenses.append({
                 "description": expense.get("description"),
-                "account_code": expense.get("accountNumber") or default_gl_code,
+                "account_code": account_number,
                 "amount": {
                     "amount": expense.get("amount"),
                     "currency": record.get("currency")
