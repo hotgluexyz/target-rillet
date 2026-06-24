@@ -26,6 +26,7 @@ class RilletSink(HotglueSink):
         "accounts": {"endpoint": "/accounts", "collection": "accounts", "key": "name", "value": "code"},
         "subsidiaries": {"endpoint": "/subsidiaries", "collection": "subsidiaries", "key": "trade_name", "value": "id"},
         "fields": {"endpoint": "/fields", "collection": "fields", "key": "name", "value": "FULL_OBJECT"},
+        "vendors": {"endpoint": "/vendors", "collection": "vendors", "key": "name", "value": "id"},
     }
 
     def __init__(
