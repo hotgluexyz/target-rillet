@@ -26,6 +26,7 @@ class RilletSink(HotglueSink):
         "accounts": {"endpoint": "/accounts", "collection": "accounts", "key": "name", "value": "code"},
         "subsidiaries": {"endpoint": "/subsidiaries", "collection": "subsidiaries", "key": "trade_name", "value": "id"},
         "fields": {"endpoint": "/fields", "collection": "fields", "key": "name", "value": "FULL_OBJECT"},
+        "vendors": {"endpoint": "/vendors", "collection": "vendors", "key": "name", "value": "id"},
     }
 
     def __init__(
@@ -99,6 +100,8 @@ class RilletSink(HotglueSink):
             }
         else:
             self._lookup_cache[lookup_name] = {item[cfg["key"]]: item[cfg["value"]] for item in items}
+            if lookup_name == "accounts":
+                self._lookup_cache[f"{lookup_name}_by_id"] = {item["id"]: item[cfg["value"]] for item in items}
 
     def lookup_in_cache(self, lookup_name: str, key: str) -> str | None:
         """Lazy-cached lookup: returns the mapped value for *key*, or None."""
@@ -106,6 +109,17 @@ class RilletSink(HotglueSink):
             self._refresh_lookup_cache(lookup_name)
         return self._lookup_cache.get(lookup_name, {}).get(key)
 
+    def update_lookup_cache(self, lookup_name: str, key: str, value: str) -> None:
+        """Add or update a single entry in a lookup cache."""
+        if lookup_name not in self._lookup_cache:
+            self._lookup_cache[lookup_name] = {}
+        self._lookup_cache[lookup_name][key] = value
+
+    def lookup_in_cache_by_id(self, lookup_name: str, id: str) -> str | None:
+        """Lazy-cached lookup: returns the mapped value for *id*, or None."""
+        if lookup_name not in self._lookup_cache:
+            self._refresh_lookup_cache(lookup_name)
+        return self._lookup_cache.get(f"{lookup_name}_by_id", {}).get(id)
 
     def upsert_record(self, record: dict, context: dict):
         """Create or update a journal entry in Rillet."""
@@ -135,3 +149,19 @@ class RilletSink(HotglueSink):
             if sub_id:
                 return sub_id
             raise ValueError(f"Subsidiary name {record['subsidiaryName']} not found in Rillet")
+    
+    def _resolve_account(self, record: dict) -> str:
+        """Resolve account code from number or cached name lookup."""
+        if record.get("accountNumber"):
+            return record["accountNumber"]
+        if record.get("accountId"):
+            account_code = self.lookup_in_cache_by_id("accounts", record["accountId"])
+            if account_code:
+                return account_code
+            raise ValueError(f"Account id {record['accountId']} not found in Rillet")
+        if record.get("accountName"):
+            account_code = self.lookup_in_cache("accounts", record["accountName"])
+            if account_code:
+                return account_code
+            raise ValueError(f"Account name {record['accountName']} not found in Rillet")
+        raise ValueError(f"One of accountNumber, accountId or accountName is required for record {record}")
