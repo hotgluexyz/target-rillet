@@ -277,6 +277,8 @@ class ChargesSink(FallbackSink):
                 raise ValueError(f"Account code is required for line item {item} in charge {record.get('externalId')}")
             # clean payload
             item.pop("accountNumber", None)
+            item.pop("accountName", None)
+            item.pop("accountId", None)
         # add default credit card account code
         if not self.config.get("default_credit_card_account_code"):
             raise ValueError("default_credit_card_account_code is a required field for charges sink, please provide it in the config.")
@@ -306,3 +308,10 @@ class VendorsSink(FallbackSink):
         if vendor_id:
             record["id"] = vendor_id
         return record
+
+    def upsert_record(self, record: dict, context: dict):
+        vendor_name = record.get("name")
+        record_id, success, state_updates = super().upsert_record(record, context)
+        if success and record_id and vendor_name:
+            self.update_lookup_cache("vendors", vendor_name, record_id)
+        return record_id, success, state_updates

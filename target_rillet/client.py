@@ -109,6 +109,12 @@ class RilletSink(HotglueSink):
             self._refresh_lookup_cache(lookup_name)
         return self._lookup_cache.get(lookup_name, {}).get(key)
 
+    def update_lookup_cache(self, lookup_name: str, key: str, value: str) -> None:
+        """Add or update a single entry in a lookup cache."""
+        if lookup_name not in self._lookup_cache:
+            self._lookup_cache[lookup_name] = {}
+        self._lookup_cache[lookup_name][key] = value
+
     def lookup_in_cache_by_id(self, lookup_name: str, id: str) -> str | None:
         """Lazy-cached lookup: returns the mapped value for *id*, or None."""
         if lookup_name not in self._lookup_cache:
