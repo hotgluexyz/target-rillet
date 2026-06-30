@@ -271,11 +271,9 @@ class ChargesSink(FallbackSink):
         record = super().preprocess_record(record, context)
         # resolve lines accounts
         for item in record.get("items", []):
-            account_code = self._resolve_account(item)
-            item["account_code"] = account_code
-            if not account_code:
-                raise ValueError(f"Account code is required for line item {item} in charge {record.get('externalId')}")
-            # clean payload
+            if not item.get("account_code"):
+                item["account_code"] = self._resolve_account(item)
+            # clean payload if needed
             item.pop("accountNumber", None)
             item.pop("accountName", None)
             item.pop("accountId", None)
