@@ -271,14 +271,12 @@ class ChargesSink(FallbackSink):
         record = super().preprocess_record(record, context)
         # resolve lines accounts
         for item in record.get("items", []):
-            account_code = self._resolve_account(item)
-            item["account_code"] = account_code
-            if not account_code:
-                raise ValueError(f"Account code is required for line item {item} in charge {record.get('externalId')}")
-            # clean payload
-            item.pop("accountNumber", None)
-            item.pop("accountName", None)
-            item.pop("accountId", None)
+            if not item.get("account_code"):
+                item["account_code"] = self._resolve_account(item)
+                # clean payload
+                item.pop("accountNumber", None)
+                item.pop("accountName", None)
+                item.pop("accountId", None)
         # add default credit card account code
         if not self.config.get("default_credit_card_account_code"):
             raise ValueError("default_credit_card_account_code is a required field for charges sink, please provide it in the config.")
