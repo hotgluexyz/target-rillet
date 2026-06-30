@@ -273,10 +273,10 @@ class ChargesSink(FallbackSink):
         for item in record.get("items", []):
             if not item.get("account_code"):
                 item["account_code"] = self._resolve_account(item)
-                # clean payload
-                item.pop("accountNumber", None)
-                item.pop("accountName", None)
-                item.pop("accountId", None)
+            # clean payload if needed
+            item.pop("accountNumber", None)
+            item.pop("accountName", None)
+            item.pop("accountId", None)
         # add default credit card account code
         if not self.config.get("default_credit_card_account_code"):
             raise ValueError("default_credit_card_account_code is a required field for charges sink, please provide it in the config.")
