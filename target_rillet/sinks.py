@@ -297,6 +297,16 @@ class ReimbursementsSink(FallbackSink):
         },
     ]
 
+class VendorCreditsSink(FallbackSink):
+    name = "vendor-credits"
+
+    relation_fields = [
+        {
+            "field": "vendor_id",
+            "objectName": "vendors",
+        },
+    ]
+
 class VendorsSink(FallbackSink):
     name = "vendors"
     allows_upserts = True
