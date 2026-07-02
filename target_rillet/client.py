@@ -165,3 +165,28 @@ class RilletSink(HotglueSink):
                 return account_code
             raise ValueError(f"Account name {record['accountName']} not found in Rillet")
         raise ValueError(f"One of accountNumber, accountId or accountName is required for record {record}")
+    
+
+    def _resolve_custom_fields(self, custom_fields: list[dict]) -> list[dict]:
+        """Resolve custom field names and values to their corresponding Rillet IDs via cache lookups."""
+        fields = []
+        for custom_field in custom_fields:
+            if not custom_field.get("name") or not custom_field.get("value"):
+                self.logger.warning(f"Custom field {custom_field} is missing name or value. Skipping...")
+                continue
+
+            field = self.lookup_in_cache("fields", custom_field["name"])
+            if not field:
+                self.logger.warning(f"Field name {custom_field['name']} not found in Rillet. Skipping...")
+                continue
+
+            field_value = next((value for value in field["values"] if value["name"] == custom_field["value"]), None)
+            if not field_value:
+                self.logger.warning(f"Field value {custom_field['value']} for field {custom_field['name']} not found in Rillet. Skipping...")
+                continue
+
+            fields.append({
+                "field_id": field["id"],
+                "field_value_id": field_value["id"],
+            })
+        return fields
