@@ -7,6 +7,7 @@ on:
       - 'ruff.toml'
       - 'tox.ini'
       - 'pyproject.toml'
+      - '.github/workflows/lint.yml'
 
 jobs:
   lint:
