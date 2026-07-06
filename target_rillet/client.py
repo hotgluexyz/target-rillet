@@ -70,7 +70,7 @@ class RilletSink(HotglueSink):
     def get_error_message(self, response: requests.Response) -> str:
         try:
             json_data = response.json()
-            if "violations" in json_data and type(json_data["violations"]) == list:
+            if "violations" in json_data and isinstance(json_data["violations"], list):
                 messages = [item.get("field") + ": " + item.get("message") for item in json_data["violations"]]
                 error_message = "\n".join(messages)
             else:
