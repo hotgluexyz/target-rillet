@@ -11,30 +11,6 @@ class JournalsSink(RilletSink):
 
     name = "JournalEntries"
     endpoint = "/journal-entries"
-    
-    def _resolve_custom_fields(self, custom_fields: list[dict]) -> list[dict]:
-        """Resolve custom field names and values to their corresponding Rillet IDs via cache lookups."""
-        fields = []
-        for custom_field in custom_fields:
-            if not custom_field.get("name") or not custom_field.get("value"):
-                self.logger.warning(f"Custom field {custom_field} is missing name or value. Skipping...")
-                continue
-
-            field = self.lookup_in_cache("fields", custom_field["name"])
-            if not field:
-                self.logger.warning(f"Field name {custom_field['name']} not found in Rillet. Skipping...")
-                continue
-
-            field_value = next((value for value in field["values"] if value["name"] == custom_field["value"]), None)
-            if not field_value:
-                self.logger.warning(f"Field value {custom_field['value']} for field {custom_field['name']} not found in Rillet. Skipping...")
-                continue
-
-            fields.append({
-                "field_id": field["id"],
-                "field_value_id": field_value["id"],
-            })
-        return fields
 
     def _resolve_name(self, record: dict) -> str:
         """Extract the journal entry name."""
@@ -156,15 +132,20 @@ class BillsSink(RilletSink):
         all_lines = record.get("expenses", []) + (record.get("lineItems", []))
         for expense in all_lines:
             account_number = self._resolve_account(expense)
-            expenses.append({
+            mapped_expense = {
                 "description": expense.get("description"),
                 "account_code": account_number,
                 "amount": {
                     "amount": expense.get("amount"),
                     "currency": record.get("currency")
                 },
-                "service_period": expense.get("service_period", {}),
-            })
+            }
+            if expense.get("customFields"):
+                mapped_expense["fields"] = self._resolve_custom_fields(expense["customFields"])
+            if expense.get("service_period"):
+                mapped_expense["service_period"] = expense.get("service_period")
+            expenses.append(mapped_expense)
+
 
         payload["items"] = expenses
         return payload
