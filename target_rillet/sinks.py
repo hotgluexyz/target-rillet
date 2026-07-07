@@ -142,7 +142,10 @@ class BillsSink(RilletSink):
             }
             if expense.get("customFields"):
                 mapped_expense["fields"] = self._resolve_custom_fields(expense["customFields"])
+            if expense.get("service_period"):
+                mapped_expense["service_period"] = expense.get("service_period")
             expenses.append(mapped_expense)
+
 
         payload["items"] = expenses
         return payload
