@@ -162,7 +162,8 @@ class BillsSink(RilletSink):
                 "amount": {
                     "amount": expense.get("amount"),
                     "currency": record.get("currency")
-                }
+                },
+                "service_period": expense.get("service_period", {}),
             })
 
         payload["items"] = expenses
