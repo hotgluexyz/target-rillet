@@ -301,3 +301,8 @@ class VendorsSink(FallbackSink):
         if success and record_id and vendor_name:
             self.update_lookup_cache("vendors", vendor_name, record_id)
         return record_id, success, state_updates
+
+
+class BankAccountsSink(FallbackSink):
+    name = "bank-accounts"
+    allows_upserts = False
