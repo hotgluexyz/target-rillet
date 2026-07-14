@@ -288,7 +288,6 @@ class VendorsSink(FallbackSink):
     allows_upserts = True
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
-        record = super().preprocess_record(record, context)
         # lookup vendor by name to not create duplicates
         vendor_id = self.lookup_in_cache("vendors", record["name"])
         if vendor_id:
