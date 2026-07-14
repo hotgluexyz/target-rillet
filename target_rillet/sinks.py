@@ -289,9 +289,9 @@ class VendorsSink(FallbackSink):
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
         # lookup vendor by name to not create duplicates
-        vendor_id = self.lookup_in_cache("vendors", record["name"])
-        if vendor_id:
-            record["id"] = vendor_id
+        # vendor_id = self.lookup_in_cache("vendors", record["name"])
+        # if vendor_id:
+        #     record["id"] = vendor_id
         return record
 
     def upsert_record(self, record: dict, context: dict):
