@@ -205,6 +205,7 @@ class BillsSink(RilletSink):
 
 class FallbackSink(RilletSink):
     """Fallback sink for handling errors."""
+    lookup_subsidiary = True
 
     @property
     def name(self) -> str:
@@ -212,11 +213,16 @@ class FallbackSink(RilletSink):
 
     @property
     def endpoint(self) -> str:
-        return f"/{self.stream_name}"
-    
+        return getattr(self, "_endpoint", None) or f"/{self.stream_name}"
+
+    @endpoint.setter
+    def endpoint(self, value: str) -> None:
+        self._endpoint = value
+
     def preprocess_record(self, record: dict, context: dict) -> dict:
         """Handle errors by posting to the fallback sink."""
-        record["subsidiary_id"] = record.get("subsidiary_id") or self._resolve_subsidiary(record)
+        if self.lookup_subsidiary:
+            record["subsidiary_id"] = record.get("subsidiary_id") or self._resolve_subsidiary(record)
         return record
 
 
@@ -306,3 +312,52 @@ class VendorsSink(FallbackSink):
 class BankAccountsSink(FallbackSink):
     name = "bank-accounts"
     allows_upserts = False
+    
+
+class BillPaymentsSink(FallbackSink):
+    name = "bill_payments"
+    lookup_subsidiary = False
+    relation_fields = [
+        {
+            "field": "bill_id",
+            "objectName": "Bills",
+        },
+    ]
+
+    def upsert_record(self, record: dict, context: dict):
+        bill_id = record.get("bill_id", None)
+        if not bill_id:
+            raise ValueError("bill_id is required")
+        self.endpoint = f"/bills/{bill_id}/payments"
+        return super().upsert_record(record, context)
+
+
+class VendorCreditsPaymentsSink(FallbackSink):
+    name = "vendor_credit_payments"
+    lookup_subsidiary = False
+    relation_fields = [
+        {
+            "field": "vendor_credit_id",
+            "objectName": "vendor-credits",
+        },
+        {
+            "field": "bill_id",
+            "objectName": "Bills",
+        },
+    ]
+
+    def preprocess_record(self, record: dict, context: dict) -> dict:
+        vendor_credit_id = record.pop("vendor_credit_id", None)
+        if not vendor_credit_id:
+            raise ValueError("vendor_credit_id is required")
+        bill_id = record.get("bill_id", None)
+        if not bill_id:
+            raise ValueError("bill_id is required")
+        # wrap record in applications array
+        record = {"applications": [record], "vendor_credit_id": vendor_credit_id}
+        return record
+
+    def upsert_record(self, record: dict, context: dict):
+        vendor_credit_id = record.pop("vendor_credit_id", None)
+        self.endpoint = f"/vendor-credits/{vendor_credit_id}/applications"
+        return super().upsert_record(record, context)
