@@ -309,6 +309,11 @@ class VendorsSink(FallbackSink):
         return record_id, success, state_updates
 
 
+class VendorCreditsSink(FallbackSink):
+    name = "vendor-credits"
+    allows_upserts = False
+
+
 class BankAccountsSink(FallbackSink):
     name = "bank-accounts"
     allows_upserts = False
