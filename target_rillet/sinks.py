@@ -322,6 +322,7 @@ class BankAccountsSink(FallbackSink):
 class BillPaymentsSink(FallbackSink):
     name = "bill_payments"
     lookup_subsidiary = False
+    allows_upserts = False
     relation_fields = [
         {
             "field": "bill_id",
