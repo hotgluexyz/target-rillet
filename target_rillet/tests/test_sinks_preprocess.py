@@ -20,7 +20,6 @@ from target_rillet.target import TargetRillet
 
 SAMPLE_CONFIG = {
     "api_key": "test-api-key",
-    "default_credit_card_account_code": "CC-100",
 }
 
 LOOKUP_CACHE = {
@@ -284,7 +283,7 @@ class TestBankTransactionsSinkPreprocessRecord:
 
 
 class TestChargesSinkPreprocessRecord:
-    def test_resolves_line_item_accounts_and_sets_credit_card_code(self):
+    def test_resolves_line_item_accounts(self):
         sink = make_sink(ChargesSink, "charges", lookup_cache=LOOKUP_CACHE)
         record = {
             "subsidiaryId": "sub-1",
@@ -304,7 +303,6 @@ class TestChargesSinkPreprocessRecord:
         payload = sink.preprocess_record(record, {})
 
         assert payload["subsidiary_id"] == "sub-1"
-        assert payload["credit_card_account_code"] == "CC-100"
         assert payload["items"][0]["account_code"] == "9999"
         assert "accountNumber" not in payload["items"][0]
         assert "accountName" not in payload["items"][0]
@@ -314,16 +312,6 @@ class TestChargesSinkPreprocessRecord:
         assert payload["items"][2]["account_code"] == "6300"
         assert "accountId" not in payload["items"][2]
         assert payload["items"][3]["account_code"] == "5000"
-
-    def test_raises_when_default_credit_card_account_code_missing(self):
-        sink = make_sink(
-            ChargesSink,
-            "charges",
-            config={"api_key": "test-api-key"},
-            lookup_cache=LOOKUP_CACHE,
-        )
-        with pytest.raises(ValueError, match="default_credit_card_account_code is a required field"):
-            sink.preprocess_record({"items": []}, {})
 
 
 class TestReimbursementsSinkPreprocessRecord:
