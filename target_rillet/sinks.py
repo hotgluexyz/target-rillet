@@ -113,7 +113,8 @@ class BillsSink(RilletSink):
             "due_date": record.get("dueDate"),
             "subsidiary_id": record.get("subsidiaryId"),
             "attachments": record.get("attachments", []),
-            "description": record.get("description")
+            "description": record.get("description"),
+            "status": record.get("status")
         }
 
         if record.get("id"):
