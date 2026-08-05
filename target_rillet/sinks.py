@@ -282,6 +282,7 @@ class ReimbursementsSink(FallbackSink):
 
 class VendorCreditsSink(FallbackSink):
     name = "vendor-credits"
+    allows_upserts = False
 
     relation_fields = [
         {
@@ -308,11 +309,6 @@ class VendorsSink(FallbackSink):
         if success and record_id and vendor_name:
             self.update_lookup_cache("vendors", vendor_name, record_id)
         return record_id, success, state_updates
-
-
-class VendorCreditsSink(FallbackSink):
-    name = "vendor-credits"
-    allows_upserts = False
 
 
 class BankAccountsSink(FallbackSink):
