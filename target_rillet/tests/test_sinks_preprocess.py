@@ -176,6 +176,7 @@ class TestBillsSinkPreprocessRecord:
             "dueDate": "2024-01-31",
             "subsidiaryId": "sub-1",
             "description": "Office supplies",
+            "status": "UNPAID",
             "currency": "USD",
             "attachments": [{"url": "https://example.com/file.pdf"}],
             "expenses": [
@@ -204,6 +205,7 @@ class TestBillsSinkPreprocessRecord:
         assert payload["due_date"] == "2024-01-31"
         assert payload["subsidiary_id"] == "sub-1"
         assert payload["description"] == "Office supplies"
+        assert payload["status"] == "UNPAID"
         assert payload["attachments"] == [{"url": "https://example.com/file.pdf"}]
         assert payload["po_number"] == "PO-99"
         assert payload["items"] == [
