@@ -104,6 +104,8 @@ class RilletSink(HotglueSink):
                 item[cfg["key"]]: item for item in items
             }
         else:
+            if lookup_name == "bank-accounts":
+                items = [item for item in items if item.get(cfg["key"]) is not None]
             self._lookup_cache[lookup_name] = {item[cfg["key"]]: item[cfg["value"]] for item in items}
             if lookup_name == "accounts":
                 self._lookup_cache[f"{lookup_name}_by_id"] = {item["id"]: item[cfg["value"]] for item in items}

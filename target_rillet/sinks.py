@@ -326,6 +326,13 @@ class BankAccountsSink(FallbackSink):
                 record["id"] = bank_account_id
         return record
 
+    def upsert_record(self, record: dict, context: dict):
+        account_code = record.get("account_code")
+        record_id, success, state_updates = super().upsert_record(record, context)
+        if success and record_id and account_code:
+            self.update_lookup_cache("bank-accounts", account_code, record_id)
+        return record_id, success, state_updates
+
 
 
 class BillPaymentsSink(FallbackSink):
