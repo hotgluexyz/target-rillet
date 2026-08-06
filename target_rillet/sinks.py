@@ -323,6 +323,9 @@ class BankAccountsSink(FallbackSink):
         if account_code:
             bank_account_id = self.lookup_in_cache("bank-accounts", account_code)
             if bank_account_id:
+                self.logger.info(
+                    f"Existing bank account {bank_account_id} found for GL account code {account_code}"
+                )
                 record["id"] = bank_account_id
         return record
 
