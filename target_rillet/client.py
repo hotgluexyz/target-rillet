@@ -27,6 +27,8 @@ class RilletSink(HotglueSink):
         "subsidiaries": {"endpoint": "/subsidiaries", "collection": "subsidiaries", "key": "trade_name", "value": "id"},
         "fields": {"endpoint": "/fields", "collection": "fields", "key": "name", "value": "FULL_OBJECT"},
         "vendors": {"endpoint": "/vendors", "collection": "vendors", "key": "name", "value": "id"},
+        # API v4 required so account_code is present on bank accounts
+        "bank-accounts": {"endpoint": "/bank-accounts", "collection": "accounts", "key": "account_code", "value": "id", "api_version": "4"},
     }
 
     def __init__(
@@ -92,7 +94,10 @@ class RilletSink(HotglueSink):
     def _refresh_lookup_cache(self, lookup_name: str) -> None:
         """Fetch a resource list from Rillet and build a name→value lookup cache."""
         cfg = self.LOOKUPS[lookup_name]
-        response = self.request_api("GET", endpoint=cfg["endpoint"])
+        headers = None
+        if cfg.get("api_version"):
+            headers = {"X-Rillet-API-Version": cfg["api_version"]}
+        response = self.request_api("GET", endpoint=cfg["endpoint"], headers=headers)
         items = response.json().get(cfg["collection"], [])
         if cfg["value"] == "FULL_OBJECT":
             self._lookup_cache[lookup_name] = {
