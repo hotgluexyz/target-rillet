@@ -105,6 +105,7 @@ class RilletSink(HotglueSink):
             }
         else:
             if lookup_name == "bank-accounts":
+                # Don't include bank accounts not mapped to a GL account
                 items = [item for item in items if item.get(cfg["key"]) is not None]
             self._lookup_cache[lookup_name] = {item[cfg["key"]]: item[cfg["value"]] for item in items}
             if lookup_name == "accounts":
