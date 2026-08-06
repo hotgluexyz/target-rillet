@@ -314,7 +314,29 @@ class VendorsSink(FallbackSink):
 class BankAccountsSink(FallbackSink):
     name = "bank-accounts"
     allows_upserts = False
-    
+
+    def preprocess_record(self, record: dict, context: dict) -> dict:
+        record = super().preprocess_record(record, context)
+        # If Rillet already has a cash account mapped to this GL account_code, reuse it
+        # (allows_upserts=False will skip POST instead of creating a new account).
+        account_code = record.get("account_code")
+        if account_code:
+            bank_account_id = self.lookup_in_cache("bank-accounts", account_code)
+            if bank_account_id:
+                self.logger.info(
+                    f"Existing bank account {bank_account_id} found for GL account code {account_code}"
+                )
+                record["id"] = bank_account_id
+        return record
+
+    def upsert_record(self, record: dict, context: dict):
+        account_code = record.get("account_code")
+        record_id, success, state_updates = super().upsert_record(record, context)
+        if success and record_id and account_code:
+            self.update_lookup_cache("bank-accounts", account_code, record_id)
+        return record_id, success, state_updates
+
+
 
 class BillPaymentsSink(FallbackSink):
     name = "bill_payments"
