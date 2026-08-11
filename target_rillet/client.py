@@ -198,3 +198,48 @@ class RilletSink(HotglueSink):
                 "field_value_id": field_value["id"],
             })
         return fields
+
+    def get_attachment_name(self, record_id: str, attachment: dict, index: int) -> str:
+        if attachment.get("name"):
+            return f"{attachment['name']}"
+        if attachment.get("id"):
+            return f"{attachment['id']}"
+        return f"{record_id}_{index}"
+
+    def post_attachment(self, record_id: str, attachment: dict, index: int) -> None:
+        """Download an attachment by URL and upload it to a Rillet entity."""
+        attachment_url = attachment.get("url")
+        if not attachment_url:
+            raise ValueError("Attachment URL is required")
+
+        resp = requests.get(attachment_url)
+        content = resp.content
+        content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+
+        att_name = self.get_attachment_name(record_id, attachment, index)
+
+        if content_type == "application/pdf" or content[:4] == b"%PDF":
+            filename, content_type = f"{att_name}.pdf", "application/pdf"
+        elif content_type in ("image/jpeg", "image/jpg") or content[:2] == b"\xff\xd8":
+            filename, content_type = f"{att_name}.jpg", "image/jpeg"
+        elif content_type == "image/png" or content[:8] == b"\x89PNG\r\n\x1a\n":
+            filename, content_type = f"{att_name}.png", "image/png"
+        elif "spreadsheetml" in content_type or content_type == "application/vnd.ms-excel":
+            filename, content_type = (
+                f"{att_name}.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        else:
+            filename, content_type = f"{att_name}.bin", "application/octet-stream"
+
+        files = {"file": (filename, content, content_type)}
+        multipart_headers = {
+            "Authorization": f"Bearer {self.config.get('api_key')}",
+            "X-Rillet-API-Version": self.api_version,
+        }
+        response = requests.post(
+            f"{self.get_base_url()}{self.endpoint}/{record_id}",
+            files=files,
+            headers=multipart_headers,
+        )
+        self.validate_response(response)

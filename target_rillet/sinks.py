@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from target_rillet.client import RilletSink
-import requests
 
 
 class JournalsSink(RilletSink):
@@ -150,52 +149,14 @@ class BillsSink(RilletSink):
 
         payload["items"] = expenses
         return payload
-    
-    def get_attachment_name(self, bill_id: str, attachment: dict, index: int) -> str:
-        if attachment.get("name"):
-            return f"{attachment['name']}"
-        if attachment.get("id"):
-            return f"{attachment['id']}"
-        return f"{bill_id}_{index}"
-
-    def post_attachment(self, bill_id: str, attachment: dict, index: int):
-        """Post an attachment to a bill."""
-        attachment_url = attachment.get("url")
-        if not attachment_url:
-            raise ValueError("Attachment URL is required")
-        
-        # get the attachment from the url
-        resp = requests.get(attachment_url)
-        content = resp.content
-        content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-
-        att_name = self.get_attachment_name(bill_id, attachment, index)
-
-        if content_type == "application/pdf" or content[:4] == b"%PDF":
-            filename, content_type = f"{att_name}.pdf", "application/pdf"
-        elif "spreadsheetml" in content_type or content_type == "application/vnd.ms-excel":
-            filename, content_type = f"{att_name}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        else:
-            filename, content_type = f"{att_name}.bin", "application/octet-stream"
-
-        # send the attachment as a multipart/form-data request
-        files = {"file": (filename, content, content_type)}
-        multipart_headers = {
-            "Authorization": f"Bearer {self.config.get('api_key')}",
-            "X-Rillet-API-Version": self.api_version,
-        }
-        response = requests.post(f"{self.get_base_url()}{self.endpoint}/{bill_id}", files=files, headers=multipart_headers)
-        self.validate_response(response)
-        return
 
     def upsert_record(self, record: dict, context: dict):
-        """Create or update a journal entry in Rillet."""
+        """Create or update a bill in Rillet, then upload any attachments."""
         attachments = record.pop("attachments", [])
         id, success, state_updates = super().upsert_record(record, context)
 
         try:
             if id and attachments:
-                # add attachment to the bill
                 for index, attachment in enumerate(attachments):
                     self.post_attachment(id, attachment, index)
         except Exception as e:
@@ -279,6 +240,21 @@ class ReimbursementsSink(FallbackSink):
             "objectName": "vendors",
         },
     ]
+
+    def upsert_record(self, record: dict, context: dict):
+        """Create a reimbursement in Rillet, then upload any attachments."""
+        attachments = record.pop("attachments", [])
+        id, success, state_updates = super().upsert_record(record, context)
+
+        try:
+            if id and attachments:
+                for index, attachment in enumerate(attachments):
+                    self.post_attachment(id, attachment, index)
+        except Exception as e:
+            self.logger.info(f"Error posting attachments to reimbursement {id}: {e}")
+
+        return id, success, state_updates
+
 
 class VendorCreditsSink(FallbackSink):
     name = "vendor-credits"
