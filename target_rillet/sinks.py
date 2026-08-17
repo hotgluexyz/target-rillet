@@ -145,6 +145,8 @@ class BillsSink(RilletSink):
             if expense.get("service_period"):
                 mapped_expense["service_period"] = expense.get("service_period")
             if expense.get("taxCode"):
+                if not expense.get("taxAmount"):
+                    raise ValueError(f"taxAmount is required for line item {expense} if taxCode is provided")
                 tax_rate = self._resolve_tax_rate(expense)
                 mapped_expense["tax_rate"] = {
                     "tax_code": expense.get("taxCode"),
