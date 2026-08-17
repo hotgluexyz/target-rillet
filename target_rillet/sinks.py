@@ -144,6 +144,17 @@ class BillsSink(RilletSink):
                 mapped_expense["fields"] = self._resolve_custom_fields(expense["customFields"])
             if expense.get("service_period"):
                 mapped_expense["service_period"] = expense.get("service_period")
+            if expense.get("taxCode"):
+                tax_rate = self._resolve_tax_rate(expense)
+                mapped_expense["tax_rate"] = {
+                    "tax_code": expense.get("taxCode"),
+                    "coverage": "INCLUSIVE" if expense.get("taxInclusive") else "EXCLUSIVE",
+                    "tax_amount": {
+                        "amount": expense.get("taxAmount"),
+                        "currency": record.get("currency")
+                    },
+                    **tax_rate
+                }
             expenses.append(mapped_expense)
 
 
