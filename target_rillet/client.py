@@ -29,6 +29,7 @@ class RilletSink(HotglueSink):
         "vendors": {"endpoint": "/vendors", "collection": "vendors", "key": "name", "value": "id"},
         # API v4 required so account_code is present on bank accounts
         "bank-accounts": {"endpoint": "/bank-accounts", "collection": "accounts", "key": "account_code", "value": "id", "api_version": "4"},
+        "tax_rates": {"endpoint": "/tax-rates", "collection": "tax_rates", "key": "code", "value": "FULL_OBJECT"},
     }
 
     def __init__(
@@ -174,6 +175,20 @@ class RilletSink(HotglueSink):
             raise ValueError(f"Account name {record['accountName']} not found in Rillet")
         raise ValueError(f"One of accountNumber, accountId or accountName is required for record {record}")
     
+
+    def _resolve_tax_rate(self, record: dict) -> str:
+        """Resolve account code from number or cached name lookup."""
+        if record.get("taxCode"):
+            tax = self.lookup_in_cache("tax_rates", record.get("taxCode"))
+            if not tax:
+                raise ValueError(f"Tax code {record.get('taxCode')} not found in Rillet")
+            tax_rate = {
+                "percentage": tax.get("percentage"),
+                "country": tax.get("country"),
+                "description": tax.get("description"),
+                "type": "SALES_TAX" if tax.get("country") == "US" else "VAT", # there is no type field in the taxes, but Bills requires the tax rate type, for now most reliable way seems to be based in country "Nearly every country outside the US uses a multi-stage VAT/GST framework"
+            }
+            return tax_rate    
 
     def _resolve_custom_fields(self, custom_fields: list[dict]) -> list[dict]:
         """Resolve custom field names and values to their corresponding Rillet IDs via cache lookups."""
