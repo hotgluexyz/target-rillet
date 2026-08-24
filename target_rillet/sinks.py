@@ -206,14 +206,18 @@ class BillsSink(RilletSink):
 
 class AirbaseFeesSink(RilletSink):
     """
-    Airbase fees are not supported by Rillet, but we fail loudly 
-    for export details.
+    Unsupported Airbase ETL streams are not supported by Rillet, but we fail
+    loudly for export details.
     """
-    name = "airbase-fees"
+    unsupported_streams = frozenset({"airbase-fees"})
     allows_upserts = False
 
+    @property
+    def name(self) -> str:
+        return self.stream_name
+
     def preprocess_record(self, record: dict, context: dict) -> dict:
-        raise ValueError("Airbase fees are not supported by Rillet")
+        raise ValueError(f"{self.name} is not supported by Rillet")
 
 
 class FallbackSink(RilletSink):

@@ -66,6 +66,9 @@ class TargetRillet(TargetHotglue):
             sink_name = getattr(sink_class, "name", None)
             if isinstance(sink_name, str) and sink_name.lower() == stream_lower:
                 return sink_class
+            unsupported_streams = getattr(sink_class, "unsupported_streams", None)
+            if unsupported_streams and stream_lower in {s.lower() for s in unsupported_streams}:
+                return sink_class
         return FallbackSink
 
 
