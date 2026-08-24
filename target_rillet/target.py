@@ -15,7 +15,8 @@ from target_rillet.sinks import (
     BankAccountsSink,
     BillPaymentsSink,
     VendorCreditsPaymentsSink,
-    VendorCreditsSink
+    VendorCreditsSink,
+    AirbaseFeesSink,
 )
 
 
@@ -53,7 +54,8 @@ class TargetRillet(TargetHotglue):
         BankAccountsSink,
         BillPaymentsSink,
         VendorCreditsPaymentsSink,
-        VendorCreditsSink
+        VendorCreditsSink,
+        AirbaseFeesSink,
     ]
 
     def get_sink_class(self, stream_name: str) -> Type[Sink]:

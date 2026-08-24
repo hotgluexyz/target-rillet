@@ -204,6 +204,18 @@ class BillsSink(RilletSink):
         return id, success, state_updates
 
 
+class AirbaseFeesSink(RilletSink):
+    """
+    Airbase fees are not supported by Rillet, but we fail loudly 
+    for export details.
+    """
+    name = "airbase-fees"
+    allows_upserts = False
+
+    def preprocess_record(self, record: dict, context: dict) -> dict:
+        raise ValueError("Airbase fees are not supported by Rillet")
+
+
 class FallbackSink(RilletSink):
     """Fallback sink for handling errors."""
     lookup_subsidiary = True
