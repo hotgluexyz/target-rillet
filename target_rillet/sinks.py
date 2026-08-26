@@ -190,7 +190,7 @@ class UnsupportedSink(RilletSink):
         return self.stream_name
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
-        raise ValueError(f"This ledger entry type is not currently supported by the Rillet integration. Please record the corresponding ledger entries in Rillet and move this entry to Sync Complete.")
+        raise ValueError("This ledger entry type is not currently supported by the Rillet integration. Please record the corresponding ledger entries in Rillet and move this entry to Sync Complete.")
 
 
 class FallbackSink(RilletSink):
