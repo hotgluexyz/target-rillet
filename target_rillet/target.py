@@ -15,7 +15,8 @@ from target_rillet.sinks import (
     BankAccountsSink,
     BillPaymentsSink,
     VendorCreditsPaymentsSink,
-    VendorCreditsSink
+    VendorCreditsSink,
+    AirbaseFeesSink,
 )
 
 
@@ -53,7 +54,8 @@ class TargetRillet(TargetHotglue):
         BankAccountsSink,
         BillPaymentsSink,
         VendorCreditsPaymentsSink,
-        VendorCreditsSink
+        VendorCreditsSink,
+        AirbaseFeesSink,
     ]
 
     def get_sink_class(self, stream_name: str) -> Type[Sink]:
@@ -63,6 +65,9 @@ class TargetRillet(TargetHotglue):
             # Class-level str (e.g. JournalsSink.name); @property on class is not a str.
             sink_name = getattr(sink_class, "name", None)
             if isinstance(sink_name, str) and sink_name.lower() == stream_lower:
+                return sink_class
+            unsupported_streams = getattr(sink_class, "unsupported_streams", None)
+            if unsupported_streams and stream_lower in {s.lower() for s in unsupported_streams}:
                 return sink_class
         return FallbackSink
 
