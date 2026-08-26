@@ -178,12 +178,11 @@ class BillsSink(RilletSink):
         return id, success, state_updates
 
 
-class AirbaseFeesSink(RilletSink):
+class UnsupportedSink(RilletSink):
     """
-    Unsupported Airbase ETL streams are not supported by Rillet, but we fail
-    loudly for export details.
+    Unsupported ETL streams are not supported by Rillet, but we fail loudly for export details.
     """
-    unsupported_streams = frozenset({"airbase-fees"})
+    unsupported_streams = frozenset({"airbase_fees", "reimbursement_payments"})
     allows_upserts = False
 
     @property
@@ -191,7 +190,7 @@ class AirbaseFeesSink(RilletSink):
         return self.stream_name
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
-        raise ValueError(f"{self.name} is not supported by Rillet")
+        raise ValueError("This ledger entry type is not currently supported by the Rillet integration. Please record the corresponding ledger entries in Rillet and move this entry to Sync Complete.")
 
 
 class FallbackSink(RilletSink):
