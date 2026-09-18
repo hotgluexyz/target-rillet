@@ -107,7 +107,7 @@ class BillsSink(RilletSink):
     def preprocess_record(self, record: dict, context: dict) -> dict:
         """Map a unified JournalEntry record to the Rillet API payload."""
         payload = {
-            "vendor_id": record.get("vendorId"),
+            "vendor_id": self._resolve_vendor(record),
             "expense_number": record.get("billNumber"),
             "bill_date": record.get("issueDate"),
             "due_date": record.get("dueDate"),
@@ -183,7 +183,7 @@ class UnsupportedSink(RilletSink):
     """
     Unsupported ETL streams are not supported by Rillet, but we fail loudly for export details.
     """
-    unsupported_streams = frozenset({"airbase_fees"})
+    unsupported_streams = frozenset({})
     allows_upserts = False
 
     @property
