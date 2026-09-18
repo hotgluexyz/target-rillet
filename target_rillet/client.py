@@ -159,6 +159,17 @@ class RilletSink(HotglueSink):
                 return sub_id
             raise ValueError(f"Subsidiary name {record['subsidiaryName']} not found in Rillet")
     
+    def _resolve_vendor(self, record: dict) -> str:
+        """Resolve vendor ID from direct ID or cached name lookup."""
+        if record.get("vendorId"):
+            return record["vendorId"]
+        if record.get("vendorName"):
+            vendor_id = self.lookup_in_cache("vendors", record["vendorName"])
+            if vendor_id:
+                return vendor_id
+            raise ValueError(f"Vendor name {record['vendorName']} not found in Rillet")
+        raise ValueError(f"One of vendorId or vendorName is required for record {record}")
+    
     def _resolve_account(self, record: dict) -> str:
         """Resolve account code from number or cached name lookup."""
         if record.get("accountNumber"):
