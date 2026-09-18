@@ -183,7 +183,7 @@ class UnsupportedSink(RilletSink):
     """
     Unsupported ETL streams are not supported by Rillet, but we fail loudly for export details.
     """
-    unsupported_streams = frozenset({"reimbursement_payments"})
+    unsupported_streams = frozenset({})
     allows_upserts = False
 
     @property
