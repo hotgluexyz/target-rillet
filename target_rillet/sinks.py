@@ -305,15 +305,16 @@ class VendorsSink(FallbackSink):
         record = super().preprocess_record(record, context)
         # lookup vendor by name to not create duplicates
         existing_vendor = self.lookup_in_cache("vendors", record["name"])
+        payload = existing_vendor.copy() if existing_vendor else record
         if existing_vendor:
-            existing_vendor.update({k:v for k,v in record.items() if k not in self._read_only_fields and v not in [None, ""]})
-        return existing_vendor
+            payload.update({k:v for k,v in record.items() if k not in self._read_only_fields and v not in [None, ""]})
+        return payload
 
     def upsert_record(self, record: dict, context: dict):
         vendor_name = record.get("name")
         record_id, success, state_updates = super().upsert_record(record, context)
         if success and record_id and vendor_name:
-            self.update_lookup_cache("vendors", vendor_name, record_id)
+            self.update_lookup_cache("vendors", vendor_name, {**record, "id": record_id})
         return record_id, success, state_updates
 
 
