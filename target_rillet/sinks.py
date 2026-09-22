@@ -299,14 +299,15 @@ class VendorCreditsSink(FallbackSink):
 class VendorsSink(FallbackSink):
     name = "vendors"
     allows_upserts = True
+    _read_only_fields = ("created_at", "updated_at")
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
         record = super().preprocess_record(record, context)
         # lookup vendor by name to not create duplicates
-        vendor_id = self.lookup_in_cache("vendors", record["name"])
-        if vendor_id:
-            record["id"] = vendor_id
-        return record
+        existing_vendor = self.lookup_in_cache("vendors", record["name"])
+        if existing_vendor:
+            existing_vendor.update({k:v for k,v in record.items() if k not in self._read_only_fields and v not in [None, ""]})
+        return existing_vendor
 
     def upsert_record(self, record: dict, context: dict):
         vendor_name = record.get("name")
