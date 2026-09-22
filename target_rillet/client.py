@@ -26,7 +26,7 @@ class RilletSink(HotglueSink):
         "accounts": {"endpoint": "/accounts", "collection": "accounts", "key": "name", "value": "code"},
         "subsidiaries": {"endpoint": "/subsidiaries", "collection": "subsidiaries", "key": "trade_name", "value": "id"},
         "fields": {"endpoint": "/fields", "collection": "fields", "key": "name", "value": "FULL_OBJECT"},
-        "vendors": {"endpoint": "/vendors", "collection": "vendors", "key": "name", "value": "id"},
+        "vendors": {"endpoint": "/vendors", "collection": "vendors", "key": "name", "value": "FULL_OBJECT"},
         # API v4 required so account_code is present on bank accounts
         "bank-accounts": {"endpoint": "/bank-accounts", "collection": "accounts", "key": "account_code", "value": "id", "api_version": "4"},
         "tax_rates": {"endpoint": "/tax-rates", "collection": "tax_rates", "key": "code", "value": "FULL_OBJECT"},
@@ -92,14 +92,27 @@ class RilletSink(HotglueSink):
             raise InvalidPayloadError(self.get_error_message(response))
         super().validate_response(response)
     
-    def _refresh_lookup_cache(self, lookup_name: str) -> None:
-        """Fetch a resource list from Rillet and build a name→value lookup cache."""
-        cfg = self.LOOKUPS[lookup_name]
+    def get_paginated_response(self, endpoint: str, cfg: str = None) -> list:
+        """Fetch a paginated response from Rillet."""
+        all_items = []
         headers = None
         if cfg.get("api_version"):
             headers = {"X-Rillet-API-Version": cfg["api_version"]}
-        response = self.request_api("GET", endpoint=cfg["endpoint"], headers=headers)
-        items = response.json().get(cfg["collection"], [])
+        next_cursor = None
+        while True:
+            params = {"cursor": next_cursor, "limit": 100} if next_cursor else {"limit": 100}
+            response = self.request_api("GET", endpoint=endpoint, headers=headers, params=params)
+            items = response.json().get(cfg["collection"], [])
+            all_items.extend(items)
+            next_cursor = response.json().get("pagination", {}).get("next_cursor")
+            if not next_cursor:
+                break
+        return all_items
+    
+    def _refresh_lookup_cache(self, lookup_name: str) -> None:
+        """Fetch a resource list from Rillet and build a name→value lookup cache."""
+        cfg = self.LOOKUPS[lookup_name]
+        items = self.get_paginated_response(cfg["endpoint"], cfg)
         if cfg["value"] == "FULL_OBJECT":
             self._lookup_cache[lookup_name] = {
                 item[cfg["key"]]: item for item in items
@@ -164,9 +177,9 @@ class RilletSink(HotglueSink):
         if record.get("vendorId"):
             return record["vendorId"]
         if record.get("vendorName"):
-            vendor_id = self.lookup_in_cache("vendors", record["vendorName"])
-            if vendor_id:
-                return vendor_id
+            existing_vendor = self.lookup_in_cache("vendors", record["vendorName"])
+            if existing_vendor:
+                return existing_vendor["id"]
             raise ValueError(f"Vendor name {record['vendorName']} not found in Rillet")
         raise ValueError(f"One of vendorId or vendorName is required for record {record}")
     
