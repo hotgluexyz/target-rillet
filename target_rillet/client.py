@@ -138,6 +138,12 @@ class RilletSink(HotglueSink):
         if lookup_name not in self._lookup_cache:
             self._lookup_cache[lookup_name] = {}
         self._lookup_cache[lookup_name][key] = value
+    
+    def update_lookup_cache_object_list(self, lookup_name: str, record: dict) -> None:
+        """Add or update a single entry in a lookup cache."""
+        if lookup_name not in self._lookup_cache:
+            self._lookup_cache[lookup_name] = []
+        self._lookup_cache[lookup_name].append(record)
 
     def lookup_in_cache_by_id(self, lookup_name: str, id: str) -> str | None:
         """Lazy-cached lookup: returns the mapped value for *id*, or None."""
@@ -181,14 +187,14 @@ class RilletSink(HotglueSink):
                 return sub_id
             raise ValueError(f"Subsidiary name {record['subsidiaryName']} not found in Rillet")
     
-    def _resolve_vendor(self, record: dict) -> str:
+    def _resolve_vendor(self, record: dict, full_object: bool = False) -> str:
         """Resolve vendor ID from direct ID if it exists, otherwise resolve by name."""
-        vendor_id = record.get("vendorId") or record.get("vendor_id")
-        vendor_name = record.get("vendorName")
+        vendor_id = record.get("id") if self.name == "vendors" else record.get("vendorId") or record.get("vendor_id")
+        vendor_name = record.get("name") if self.name == "vendors" else record.get("vendorName")
         if vendor_id:
             existing_vendor = self.lookup_in_cache_object_list("vendors", "id", vendor_id)
             if existing_vendor:
-                return vendor_id
+                return existing_vendor[0] if full_object else vendor_id
             self.logger.warning(f"Vendor id {vendor_id} not found in Rillet. Trying to resolve by name...")
         if vendor_name:
             existing_vendor = self.lookup_in_cache_object_list("vendors", "name", vendor_name)
@@ -196,7 +202,7 @@ class RilletSink(HotglueSink):
                 raise ValueError(f"Vendor name {vendor_name} not found in Rillet")
             if len(existing_vendor) > 1:
                 raise ValueError(f"Multiple vendors found for name '{vendor_name}'.")
-            return existing_vendor[0]["id"]
+            return existing_vendor[0] if full_object else existing_vendor[0]["id"]
         raise ValueError(f"One of vendorId or vendorName is required for record {record}")
     
     def _resolve_account(self, record: dict) -> str:
