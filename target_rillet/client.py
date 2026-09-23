@@ -140,10 +140,17 @@ class RilletSink(HotglueSink):
         self._lookup_cache[lookup_name][key] = value
     
     def update_lookup_cache_object_list(self, lookup_name: str, record: dict) -> None:
-        """Add or update a single entry in a lookup cache."""
+        """Replace a cached object with the same id, or append when the id is new."""
         if lookup_name not in self._lookup_cache:
             self._lookup_cache[lookup_name] = []
-        self._lookup_cache[lookup_name].append(record)
+        cache = self._lookup_cache[lookup_name]
+        record_id = record.get("id")
+        if record_id:
+            for index, item in enumerate(cache):
+                if item.get("id") == record_id:
+                    cache[index] = record
+                    return
+        cache.append(record)
 
     def lookup_in_cache_by_id(self, lookup_name: str, id: str) -> str | None:
         """Lazy-cached lookup: returns the mapped value for *id*, or None."""
@@ -199,11 +206,16 @@ class RilletSink(HotglueSink):
         if vendor_name:
             existing_vendor = self.lookup_in_cache_object_list("vendors", "name", vendor_name)
             if len(existing_vendor) == 0:
+                # only fail if not a vendor stream, for vendors we want to create a new vendor if it doesn't exist
+                if self.name == "vendors":
+                    return None
                 raise ValueError(f"Vendor name {vendor_name} not found in Rillet")
             if len(existing_vendor) > 1:
                 raise ValueError(f"Multiple vendors found for name '{vendor_name}'.")
             return existing_vendor[0] if full_object else existing_vendor[0]["id"]
-        raise ValueError(f"One of vendorId or vendorName is required for record {record}")
+        # only fail if not a vendor stream, for vendors we want to create a new vendor if it doesn't exist
+        if self.name != "vendors":
+            raise ValueError(f"One of vendorId or vendorName is required for record {record}")
     
     def _resolve_account(self, record: dict) -> str:
         """Resolve account code from number or cached name lookup."""

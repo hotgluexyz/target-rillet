@@ -352,3 +352,33 @@ class TestVendorsSinkPreprocessRecord:
         )
         assert "id" not in payload
         assert payload["name"] == "New Vendor Inc"
+
+
+class TestUpdateLookupCacheObjectList:
+    def test_updates_cached_vendor_by_id(self):
+        sink = make_sink(
+            VendorsSink,
+            "vendors",
+            lookup_cache={"vendors": [{"id": "vendor-1", "name": "Acme Corp"}]},
+        )
+        sink.update_lookup_cache_object_list(
+            "vendors",
+            {"id": "vendor-1", "name": "Acme Corp", "email": "a@acme.com"},
+        )
+        vendors = sink._lookup_cache["vendors"]
+        assert len(vendors) == 1
+        assert vendors[0]["email"] == "a@acme.com"
+        assert len(sink.lookup_in_cache_object_list("vendors", "name", "Acme Corp")) == 1
+
+    def test_appends_when_vendor_id_is_new(self):
+        sink = make_sink(
+            VendorsSink,
+            "vendors",
+            lookup_cache={"vendors": [{"id": "vendor-1", "name": "Acme Corp"}]},
+        )
+        sink.update_lookup_cache_object_list(
+            "vendors",
+            {"id": "vendor-2", "name": "New Vendor"},
+        )
+        vendors = sink._lookup_cache["vendors"]
+        assert [vendor["id"] for vendor in vendors] == ["vendor-1", "vendor-2"]
