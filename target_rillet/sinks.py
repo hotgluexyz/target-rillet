@@ -197,6 +197,7 @@ class UnsupportedSink(RilletSink):
 class FallbackSink(RilletSink):
     """Fallback sink for handling errors."""
     lookup_subsidiary = True
+    lookup_vendor = False
 
     @property
     def name(self) -> str:
@@ -214,6 +215,11 @@ class FallbackSink(RilletSink):
         """Handle errors by posting to the fallback sink."""
         if self.lookup_subsidiary:
             record["subsidiary_id"] = record.get("subsidiary_id") or self._resolve_subsidiary(record)
+        if self.lookup_vendor:
+            # confirm if vendor_id is valid or lookup by name, because id might have been deleted or merged in Rillet after it was synced to the other system 
+            vendor_id = self._resolve_vendor(record)
+            record["vendor_id"] = vendor_id
+            record.pop("vendorName", None)
         return record
 
 
@@ -238,6 +244,7 @@ class BankTransactionsSink(FallbackSink):
 class ChargesSink(FallbackSink):
     name = "charges"
     allows_upserts = False
+    lookup_vendor = True
 
     relation_fields = [
         {
@@ -262,6 +269,7 @@ class ChargesSink(FallbackSink):
 class ReimbursementsSink(FallbackSink):
     name = "reimbursements"
     allows_upserts = False
+    lookup_vendor = True
 
     relation_fields = [
         {
@@ -288,6 +296,7 @@ class ReimbursementsSink(FallbackSink):
 class VendorCreditsSink(FallbackSink):
     name = "vendor-credits"
     allows_upserts = False
+    lookup_vendor = True
 
     relation_fields = [
         {

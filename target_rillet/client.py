@@ -26,7 +26,7 @@ class RilletSink(HotglueSink):
         "accounts": {"endpoint": "/accounts", "collection": "accounts", "key": "name", "value": "code"},
         "subsidiaries": {"endpoint": "/subsidiaries", "collection": "subsidiaries", "key": "trade_name", "value": "id"},
         "fields": {"endpoint": "/fields", "collection": "fields", "key": "name", "value": "FULL_OBJECT"},
-        "vendors": {"endpoint": "/vendors", "collection": "vendors", "key": "name", "value": "FULL_OBJECT"},
+        "vendors": {"endpoint": "/vendors", "collection": "vendors", "value": "OBJECT_LIST"},
         # API v4 required so account_code is present on bank accounts
         "bank-accounts": {"endpoint": "/bank-accounts", "collection": "accounts", "key": "account_code", "value": "id", "api_version": "4"},
         "tax_rates": {"endpoint": "/tax-rates", "collection": "tax_rates", "key": "code", "value": "FULL_OBJECT"},
@@ -117,6 +117,8 @@ class RilletSink(HotglueSink):
             self._lookup_cache[lookup_name] = {
                 item[cfg["key"]]: item for item in items
             }
+        elif cfg["value"] == "OBJECT_LIST":
+            self._lookup_cache[lookup_name] = items
         else:
             if lookup_name == "bank-accounts":
                 # Don't include bank accounts not mapped to a GL account
@@ -142,6 +144,13 @@ class RilletSink(HotglueSink):
         if lookup_name not in self._lookup_cache:
             self._refresh_lookup_cache(lookup_name)
         return self._lookup_cache.get(f"{lookup_name}_by_id", {}).get(id)
+    
+    def lookup_in_cache_object_list(self, lookup_name: str, key: str, value: str) -> dict | None:
+        """Lazy-cached lookup: returns the full object for *name*, or None."""
+        if lookup_name not in self._lookup_cache:
+            self._refresh_lookup_cache(lookup_name)
+        matches = [item for item in self._lookup_cache.get(lookup_name, []) if item[key] == value]
+        return matches
 
     def upsert_record(self, record: dict, context: dict):
         """Create or update a journal entry in Rillet."""
@@ -174,13 +183,20 @@ class RilletSink(HotglueSink):
     
     def _resolve_vendor(self, record: dict) -> str:
         """Resolve vendor ID from direct ID or cached name lookup."""
-        if record.get("vendorId"):
-            return record["vendorId"]
-        if record.get("vendorName"):
-            existing_vendor = self.lookup_in_cache("vendors", record["vendorName"])
+        vendor_id = record.get("vendorId") or record.get("vendor_id")
+        vendor_name = record.get("vendorName")
+        if vendor_id:
+            existing_vendor = self.lookup_in_cache_object_list("vendors", "id", vendor_id)
             if existing_vendor:
-                return existing_vendor["id"]
-            raise ValueError(f"Vendor name {record['vendorName']} not found in Rillet")
+                return vendor_id
+            self.logger.warning(f"Vendor id {vendor_id} not found in Rillet. Trying to resolve by name...")
+        if vendor_name:
+            existing_vendor = self.lookup_in_cache_object_list("vendors", "name", vendor_name)
+            if len(existing_vendor) == 0:
+                raise ValueError(f"Vendor name {vendor_name} not found in Rillet")
+            if len(existing_vendor) > 1:
+                raise ValueError(f"Multiple vendors found for name '{vendor_name}'.")
+            return existing_vendor[0]["id"]
         raise ValueError(f"One of vendorId or vendorName is required for record {record}")
     
     def _resolve_account(self, record: dict) -> str:
