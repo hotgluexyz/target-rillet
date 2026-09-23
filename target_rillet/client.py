@@ -182,7 +182,7 @@ class RilletSink(HotglueSink):
             raise ValueError(f"Subsidiary name {record['subsidiaryName']} not found in Rillet")
     
     def _resolve_vendor(self, record: dict) -> str:
-        """Resolve vendor ID from direct ID or cached name lookup."""
+        """Resolve vendor ID from direct ID if it exists, otherwise resolve by name."""
         vendor_id = record.get("vendorId") or record.get("vendor_id")
         vendor_name = record.get("vendorName")
         if vendor_id:
