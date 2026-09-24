@@ -9,6 +9,7 @@ from hotglue_singer_sdk.plugin_base import PluginBase
 from hotglue_singer_sdk.target_sdk.client import HotglueSink
 from hotglue_etl_exceptions import InvalidCredentialsError, InvalidPayloadError
 from hotglue_singer_sdk.exceptions import RetriableAPIError
+from target_rillet.attachment_helpers import resolve_attachment_filename_and_type
 
 
 class RilletSink(HotglueSink):
@@ -256,20 +257,9 @@ class RilletSink(HotglueSink):
         content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
 
         att_name = self.get_attachment_name(record_id, attachment, index)
-
-        if content_type == "application/pdf" or content[:4] == b"%PDF":
-            filename, content_type = f"{att_name}.pdf", "application/pdf"
-        elif content_type in ("image/jpeg", "image/jpg") or content[:2] == b"\xff\xd8":
-            filename, content_type = f"{att_name}.jpg", "image/jpeg"
-        elif content_type == "image/png" or content[:8] == b"\x89PNG\r\n\x1a\n":
-            filename, content_type = f"{att_name}.png", "image/png"
-        elif "spreadsheetml" in content_type or content_type == "application/vnd.ms-excel":
-            filename, content_type = (
-                f"{att_name}.xlsx",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-        else:
-            filename, content_type = f"{att_name}.bin", "application/octet-stream"
+        filename, content_type = resolve_attachment_filename_and_type(
+            att_name, content, content_type
+        )
 
         files = {"file": (filename, content, content_type)}
         multipart_headers = {
