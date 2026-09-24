@@ -238,6 +238,7 @@ class BankTransactionsSink(FallbackSink):
 class ChargesSink(FallbackSink):
     name = "charges"
     allows_upserts = False
+    api_version = "4"
 
     relation_fields = [
         {
