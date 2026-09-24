@@ -245,6 +245,7 @@ class ChargesSink(FallbackSink):
     name = "charges"
     allows_upserts = False
     lookup_vendor = True
+    api_version = "4"
 
     relation_fields = [
         {
