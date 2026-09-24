@@ -158,7 +158,7 @@ class RilletSink(HotglueSink):
             self._refresh_lookup_cache(lookup_name)
         return self._lookup_cache.get(f"{lookup_name}_by_id", {}).get(id)
     
-    def lookup_in_cache_object_list(self, lookup_name: str, key: str, value: str) -> dict | None:
+    def lookup_in_cache_object_list(self, lookup_name: str, key: str, value: str) -> List[dict] | None:
         """Lazy-cached lookup: returns the full object for *name*, or None."""
         if lookup_name not in self._lookup_cache:
             self._refresh_lookup_cache(lookup_name)
