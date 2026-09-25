@@ -17,6 +17,7 @@ class RilletSink(HotglueSink):
     base_url = "https://api.rillet.com"
     endpoint = ""
     allows_upserts = True
+    supports_attachments = False
 
     @property
     def api_version(self) -> str:
@@ -170,19 +171,32 @@ class RilletSink(HotglueSink):
         state_updates = dict()
         method = "POST"
         endpoint = self.endpoint
+        attachments = record.pop("attachments", [])
+        id = record.pop("id", None)
 
-        if record.get("id") and self.allows_upserts:
-            id = record.pop("id")
-            state_updates["is_updated"] = True
-            method = "PUT"
-            endpoint = f"{self.endpoint}/{id}"
+        if id:
+            if self.allows_upserts:
+                state_updates["is_updated"] = True
+                method = "PUT"
+                endpoint = f"{self.endpoint}/{id}"
+            else:
+                self.logger.warning(f"Record {id} for {self.name} sink already exists in Rillet and upserts are not allowed. Skipping...")
+                state_updates["existing"] = True
+
+        # send attachments for all sinks that support it, even if upserts for the record irself are not allowed
+        if not state_updates.get("existing"):
+            response = self.request_api(method, endpoint=endpoint, request_data=record)
+            id = response.json().get("id")
+
+        if self.supports_attachments and attachments:
+            try:
+                for index, attachment in enumerate(attachments):
+                    self.post_attachment(id, attachment, index)
+            except Exception as e:
+                self.logger.info(f"Error posting attachments to reimbursement {id}: {e}")
         
-        if record.get("id") and not self.allows_upserts:
-            self.logger.warning(f"Record {record.get('id')} for {self.name} sink already exists in Rillet and upserts are not allowed. Skipping...")
-            return record.get("id"), True, {"existing": True}
-
-        response = self.request_api(method, endpoint=endpoint, request_data=record)
-        return response.json().get("id"), True, state_updates
+        return id, True, state_updates
+      
 
     def _resolve_subsidiary(self, record: dict) -> str:
         """Resolve subsidiary ID from direct ID or cached name lookup."""
@@ -310,6 +324,7 @@ class RilletSink(HotglueSink):
             "Authorization": f"Bearer {self.config.get('api_key')}",
             "X-Rillet-API-Version": self.api_version,
         }
+        self.logger.info(f"Posting attachment for {self.name} with id: {record_id}")
         response = requests.post(
             f"{self.get_base_url()}{self.endpoint}/{record_id}",
             files=files,

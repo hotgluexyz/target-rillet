@@ -97,6 +97,7 @@ class JournalsSink(RilletSink):
 class BillsSink(RilletSink):
     name = "Bills"
     endpoint = "/bills"
+    supports_attachments = True
     relation_fields = [
         {
             "field": "vendorId",
@@ -163,20 +164,6 @@ class BillsSink(RilletSink):
 
         payload["items"] = expenses
         return payload
-
-    def upsert_record(self, record: dict, context: dict):
-        """Create or update a bill in Rillet, then upload any attachments."""
-        attachments = record.pop("attachments", [])
-        id, success, state_updates = super().upsert_record(record, context)
-
-        try:
-            if id and attachments:
-                for index, attachment in enumerate(attachments):
-                    self.post_attachment(id, attachment, index)
-        except Exception as e:
-            self.logger.info(f"Error posting attachments to bill {id}: {e}")
-
-        return id, success, state_updates
 
 
 class UnsupportedSink(RilletSink):
@@ -245,6 +232,7 @@ class ChargesSink(FallbackSink):
     name = "charges"
     allows_upserts = False
     lookup_vendor = True
+    supports_attachments = True
 
     relation_fields = [
         {
@@ -269,6 +257,7 @@ class ChargesSink(FallbackSink):
 class ReimbursementsSink(FallbackSink):
     name = "reimbursements"
     allows_upserts = False
+    supports_attachments = True
     lookup_vendor = True
 
     relation_fields = [
@@ -277,20 +266,6 @@ class ReimbursementsSink(FallbackSink):
             "objectName": "vendors",
         },
     ]
-
-    def upsert_record(self, record: dict, context: dict):
-        """Create a reimbursement in Rillet, then upload any attachments."""
-        attachments = record.pop("attachments", [])
-        id, success, state_updates = super().upsert_record(record, context)
-
-        try:
-            if id and attachments:
-                for index, attachment in enumerate(attachments):
-                    self.post_attachment(id, attachment, index)
-        except Exception as e:
-            self.logger.info(f"Error posting attachments to reimbursement {id}: {e}")
-
-        return id, success, state_updates
 
 
 class VendorCreditsSink(FallbackSink):
