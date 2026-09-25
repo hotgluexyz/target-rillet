@@ -33,9 +33,15 @@ LOOKUP_CACHE = {
     "subsidiaries": {
         "US Entity": "sub-123",
     },
-    "vendors": {
-        "Acme Corp": "vendor-456",
-    },
+    "vendors": [
+        {
+            "name": "Acme Corp",
+            "id": "vendor-456",
+        },
+        {   "id": "vendor-1", 
+            "name": "Acme Corp 2",
+        },
+    ],
     "fields": {
         "Department": {
             "id": "field-1",
@@ -110,19 +116,34 @@ class TestJournalsSinkPreprocessRecord:
     def test_resolves_name_from_number_or_description(self):
         sink = make_sink(JournalsSink, "JournalEntries", lookup_cache=LOOKUP_CACHE)
 
-        assert sink.preprocess_record(
-            {"number": "NUM-1", "lineItems": [{"debitAmount": "1", "accountNumber": "1000"}]},
-            {},
-        )["name"] == "NUM-1"
-        assert sink.preprocess_record(
-            {"description": "Monthly close", "lineItems": [{"debitAmount": "1", "accountNumber": "1000"}]},
-            {},
-        )["name"] == "Monthly close"
+        assert (
+            sink.preprocess_record(
+                {
+                    "number": "NUM-1",
+                    "lineItems": [{"debitAmount": "1", "accountNumber": "1000"}],
+                },
+                {},
+            )["name"]
+            == "NUM-1"
+        )
+        assert (
+            sink.preprocess_record(
+                {
+                    "description": "Monthly close",
+                    "lineItems": [{"debitAmount": "1", "accountNumber": "1000"}],
+                },
+                {},
+            )["name"]
+            == "Monthly close"
+        )
 
     def test_defaults_currency_to_usd(self):
         sink = make_sink(JournalsSink, "JournalEntries", lookup_cache=LOOKUP_CACHE)
         payload = sink.preprocess_record(
-            {"journalEntryNumber": "JE-002", "lineItems": [{"debitAmount": "1", "accountNumber": "1000"}]},
+            {
+                "journalEntryNumber": "JE-002",
+                "lineItems": [{"debitAmount": "1", "accountNumber": "1000"}],
+            },
             {},
         )
         assert payload["currency"] == "USD"
@@ -148,7 +169,9 @@ class TestJournalsSinkPreprocessRecord:
                     {
                         "debitAmount": "50",
                         "accountNumber": "1000",
-                        "customFields": [{"name": "Department", "value": "Engineering"}],
+                        "customFields": [
+                            {"name": "Department", "value": "Engineering"}
+                        ],
                     }
                 ],
             },
@@ -160,7 +183,9 @@ class TestJournalsSinkPreprocessRecord:
 
     def test_raises_when_name_is_missing(self):
         sink = make_sink(JournalsSink, "JournalEntries", lookup_cache=LOOKUP_CACHE)
-        with pytest.raises(ValueError, match="Journal entry number, number, or description is required"):
+        with pytest.raises(
+            ValueError, match="Journal entry number, number, or description is required"
+        ):
             sink.preprocess_record({"lineItems": []}, {})
 
 
@@ -274,7 +299,9 @@ class TestFallbackSinkPreprocessRecord:
 
 class TestBankTransactionsSinkPreprocessRecord:
     def test_inherits_fallback_subsidiary_resolution(self):
-        sink = make_sink(BankTransactionsSink, "bank-transactions", lookup_cache=LOOKUP_CACHE)
+        sink = make_sink(
+            BankTransactionsSink, "bank-transactions", lookup_cache=LOOKUP_CACHE
+        )
         payload = sink.preprocess_record(
             {"bank_account_id": "ba-1", "subsidiaryName": "US Entity"},
             {},
@@ -286,6 +313,7 @@ class TestChargesSinkPreprocessRecord:
     def test_resolves_line_item_accounts(self):
         sink = make_sink(ChargesSink, "charges", lookup_cache=LOOKUP_CACHE)
         record = {
+            "vendor_id": "vendor-1",
             "subsidiaryId": "sub-1",
             "items": [
                 {
@@ -316,7 +344,9 @@ class TestChargesSinkPreprocessRecord:
 
 class TestReimbursementsSinkPreprocessRecord:
     def test_inherits_fallback_subsidiary_resolution(self):
-        sink = make_sink(ReimbursementsSink, "reimbursements", lookup_cache=LOOKUP_CACHE)
+        sink = make_sink(
+            ReimbursementsSink, "reimbursements", lookup_cache=LOOKUP_CACHE
+        )
         payload = sink.preprocess_record(
             {"vendor_id": "vendor-1", "subsidiaryId": "sub-99"},
             {},
@@ -352,3 +382,35 @@ class TestVendorsSinkPreprocessRecord:
         )
         assert "id" not in payload
         assert payload["name"] == "New Vendor Inc"
+
+
+class TestUpdateLookupCacheObjectList:
+    def test_updates_cached_vendor_by_id(self):
+        sink = make_sink(
+            VendorsSink,
+            "vendors",
+            lookup_cache={"vendors": [{"id": "vendor-1", "name": "Acme Corp"}]},
+        )
+        sink.update_lookup_cache_object_list(
+            "vendors",
+            {"id": "vendor-1", "name": "Acme Corp", "email": "a@acme.com"},
+        )
+        vendors = sink._lookup_cache["vendors"]
+        assert len(vendors) == 1
+        assert vendors[0]["email"] == "a@acme.com"
+        assert (
+            len(sink.lookup_in_cache_object_list("vendors", "name", "Acme Corp")) == 1
+        )
+
+    def test_appends_when_vendor_id_is_new(self):
+        sink = make_sink(
+            VendorsSink,
+            "vendors",
+            lookup_cache={"vendors": [{"id": "vendor-1", "name": "Acme Corp"}]},
+        )
+        sink.update_lookup_cache_object_list(
+            "vendors",
+            {"id": "vendor-2", "name": "New Vendor"},
+        )
+        vendors = sink._lookup_cache["vendors"]
+        assert [vendor["id"] for vendor in vendors] == ["vendor-1", "vendor-2"]

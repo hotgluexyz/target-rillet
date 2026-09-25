@@ -197,6 +197,7 @@ class UnsupportedSink(RilletSink):
 class FallbackSink(RilletSink):
     """Fallback sink for handling errors."""
     lookup_subsidiary = True
+    lookup_vendor = False
 
     @property
     def name(self) -> str:
@@ -214,6 +215,11 @@ class FallbackSink(RilletSink):
         """Handle errors by posting to the fallback sink."""
         if self.lookup_subsidiary:
             record["subsidiary_id"] = record.get("subsidiary_id") or self._resolve_subsidiary(record)
+        if self.lookup_vendor:
+            # confirm if vendor_id is valid or lookup by name, because id might have been deleted or merged in Rillet after it was synced to the other system 
+            vendor_id = self._resolve_vendor(record)
+            record["vendor_id"] = vendor_id
+            record.pop("vendorName", None)
         return record
 
 
@@ -238,6 +244,7 @@ class BankTransactionsSink(FallbackSink):
 class ChargesSink(FallbackSink):
     name = "charges"
     allows_upserts = False
+    lookup_vendor = True
     api_version = "4"
 
     relation_fields = [
@@ -263,6 +270,7 @@ class ChargesSink(FallbackSink):
 class ReimbursementsSink(FallbackSink):
     name = "reimbursements"
     allows_upserts = False
+    lookup_vendor = True
 
     relation_fields = [
         {
@@ -289,6 +297,7 @@ class ReimbursementsSink(FallbackSink):
 class VendorCreditsSink(FallbackSink):
     name = "vendor-credits"
     allows_upserts = False
+    lookup_vendor = True
 
     relation_fields = [
         {
@@ -305,7 +314,7 @@ class VendorsSink(FallbackSink):
     def preprocess_record(self, record: dict, context: dict) -> dict:
         record = super().preprocess_record(record, context)
         # lookup vendor by name to not create duplicates
-        existing_vendor = self.lookup_in_cache("vendors", record["name"])
+        existing_vendor = self._resolve_vendor(record, full_object=True)
         payload = existing_vendor.copy() if existing_vendor else record
         if existing_vendor:
             payload.update({k:v for k,v in record.items() if k not in self._read_only_fields and v not in [None, ""]})
@@ -315,7 +324,7 @@ class VendorsSink(FallbackSink):
         vendor_name = record.get("name")
         record_id, success, state_updates = super().upsert_record(record, context)
         if success and record_id and vendor_name:
-            self.update_lookup_cache("vendors", vendor_name, {**record, "id": record_id})
+            self.update_lookup_cache_object_list("vendors", {**record, "id": record_id})
         return record_id, success, state_updates
 
 
