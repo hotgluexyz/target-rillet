@@ -222,7 +222,7 @@ class FallbackSink(RilletSink):
             record["vendor_id"] = vendor_id
             record.pop("vendorName", None)
         if self.supports_line_prepayments:
-            record = self.process_prepaid_lines(record.get(self.lines_field))
+            record[self.lines_field] = self.process_prepaid_lines(record.get(self.lines_field))
         return record
 
 
