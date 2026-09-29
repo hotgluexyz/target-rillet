@@ -249,8 +249,6 @@ class ChargesSink(FallbackSink):
     allows_upserts = False
     lookup_vendor = True
     api_version = "4"
-    supports_line_prepayments = True
-    lines_field = "items"
 
     relation_fields = [
         {
@@ -269,6 +267,7 @@ class ChargesSink(FallbackSink):
             item.pop("accountNumber", None)
             item.pop("accountName", None)
             item.pop("accountId", None)
+        record[self.lines_field] = self.process_prepaid_lines(record.get(self.lines_field))
         return record
     
     def upsert_record(self, record: dict, context: dict):
