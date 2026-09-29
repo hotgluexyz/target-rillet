@@ -265,6 +265,20 @@ class ChargesSink(FallbackSink):
             item.pop("accountName", None)
             item.pop("accountId", None)
         return record
+    
+    def upsert_record(self, record: dict, context: dict):
+        """Create a reimbursement in Rillet, then upload any attachments."""
+        attachments = record.pop("attachments", [])
+        id, success, state_updates = super().upsert_record(record, context)
+
+        try:
+            if id and attachments:
+                for index, attachment in enumerate(attachments):
+                    self.post_attachment(id, attachment, index)
+        except Exception as e:
+            self.logger.info(f"Error posting attachments to reimbursement {id}: {e}")
+
+        return id, success, state_updates
 
 
 class ReimbursementsSink(FallbackSink):
