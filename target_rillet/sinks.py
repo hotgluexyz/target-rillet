@@ -267,7 +267,7 @@ class ChargesSink(FallbackSink):
             item.pop("accountNumber", None)
             item.pop("accountName", None)
             item.pop("accountId", None)
-        record[self.lines_field] = self.process_prepaid_lines(record.get(self.lines_field))
+        record["items"] = self.process_prepaid_lines(record.get("items"))
         return record
     
     def upsert_record(self, record: dict, context: dict):
