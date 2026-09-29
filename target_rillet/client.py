@@ -24,7 +24,7 @@ class RilletSink(HotglueSink):
         return self.config.get("api_version", "2")
 
     LOOKUPS = {
-        "accounts": {"endpoint": "/accounts", "collection": "accounts", "key": "name", "value": "code"},
+        "accounts": {"endpoint": "/accounts", "collection": "accounts", "key": "name", "value": "code", "api_version": "4"},
         "subsidiaries": {"endpoint": "/subsidiaries", "collection": "subsidiaries", "key": "trade_name", "value": "id"},
         "fields": {"endpoint": "/fields", "collection": "fields", "key": "name", "value": "FULL_OBJECT"},
         "vendors": {"endpoint": "/vendors", "collection": "vendors", "value": "OBJECT_LIST"},
@@ -127,6 +127,8 @@ class RilletSink(HotglueSink):
             self._lookup_cache[lookup_name] = {item[cfg["key"]]: item[cfg["value"]] for item in items}
             if lookup_name == "accounts":
                 self._lookup_cache[f"{lookup_name}_by_id"] = {item["id"]: item[cfg["value"]] for item in items}
+                # also store all accounts of type expense that are tied to a prepaid account
+                self._lookup_cache["accounts_with_prepaid_account"] = {item["code"] for item in items if item.get("prepaid_account_code")}
 
     def lookup_in_cache(self, lookup_name: str, key: str) -> str | None:
         """Lazy-cached lookup: returns the mapped value for *key*, or None."""
@@ -306,3 +308,26 @@ class RilletSink(HotglueSink):
             headers=multipart_headers,
         )
         self.validate_response(response)
+
+    def process_prepaid_lines(self, lines: dict) -> list[dict]:
+        """Process prepaid lines for a record."""
+        has_service_period = False
+        has_item_with_prepaid_account = False
+
+        if "accounts_with_prepaid_account" not in self._lookup_cache:
+            self._refresh_lookup_cache("accounts")
+
+        for line in lines:
+            if line.get("service_period"):
+                has_service_period = True
+                if line.get("account_code") in self._lookup_cache["accounts_with_prepaid_account"]:
+                    has_item_with_prepaid_account = True
+                else:
+                    line.pop("service_period", None)
+
+        if has_service_period and not has_item_with_prepaid_account:
+            raise ValueError(
+                "A service period is present on at least one line item, but none of the lines use a prepaid account."
+            )
+       
+        return lines
