@@ -161,7 +161,7 @@ class BillsSink(RilletSink):
             expenses.append(mapped_expense)
 
 
-        payload["items"] = expenses
+        payload["items"] = self.process_prepaid_lines(expenses)
         return payload
 
     def upsert_record(self, record: dict, context: dict):
@@ -198,6 +198,7 @@ class FallbackSink(RilletSink):
     """Fallback sink for handling errors."""
     lookup_subsidiary = True
     lookup_vendor = False
+    supports_line_prepayments = False
 
     @property
     def name(self) -> str:
@@ -220,6 +221,8 @@ class FallbackSink(RilletSink):
             vendor_id = self._resolve_vendor(record)
             record["vendor_id"] = vendor_id
             record.pop("vendorName", None)
+        if self.supports_line_prepayments:
+            record[self.lines_field] = self.process_prepaid_lines(record.get(self.lines_field))
         return record
 
 
@@ -264,6 +267,7 @@ class ChargesSink(FallbackSink):
             item.pop("accountNumber", None)
             item.pop("accountName", None)
             item.pop("accountId", None)
+        record["items"] = self.process_prepaid_lines(record.get("items"))
         return record
     
     def upsert_record(self, record: dict, context: dict):
@@ -285,6 +289,8 @@ class ReimbursementsSink(FallbackSink):
     name = "reimbursements"
     allows_upserts = False
     lookup_vendor = True
+    supports_line_prepayments = True
+    lines_field = "items"
 
     relation_fields = [
         {
