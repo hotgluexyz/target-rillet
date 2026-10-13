@@ -445,5 +445,8 @@ class VendorCreditsPaymentsSink(FallbackSink):
 
 
 class ExternalReferenceTypesSink(FallbackSink):
+    """
+    Creates external reference types in Rillet.
+    """
     name = "external-reference-types"
     api_version = "4"
