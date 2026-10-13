@@ -442,3 +442,11 @@ class VendorCreditsPaymentsSink(FallbackSink):
         vendor_credit_id = record.pop("vendor_credit_id", None)
         self.endpoint = f"/vendor-credits/{vendor_credit_id}/applications"
         return super().upsert_record(record, context)
+
+
+class ExternalReferenceTypesSink(FallbackSink):
+    """
+    Creates external reference types in Rillet.
+    """
+    name = "external-reference-types"
+    api_version = "4"
