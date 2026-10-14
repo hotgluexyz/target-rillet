@@ -331,3 +331,20 @@ class RilletSink(HotglueSink):
             )
        
         return lines
+    
+
+    def map_line_taxes(self, line: dict, currency: str) -> dict: 
+        if line.get("taxCode"):
+            if "taxAmount" not in line:
+                raise ValueError(f"taxAmount is required for line item {line} if taxCode is provided")
+            tax_rate = self._resolve_tax_rate(line)
+            line["tax_rate"] = {
+                "tax_code": line.get("taxCode"),
+                "coverage": "INCLUSIVE" if line.get("taxInclusive") else "EXCLUSIVE",
+                "tax_amount": {
+                    "amount": line.get("taxAmount"),
+                    "currency": currency
+                },
+                **tax_rate
+            }
+        return line
