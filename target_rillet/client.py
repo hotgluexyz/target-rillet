@@ -339,10 +339,10 @@ class RilletSink(HotglueSink):
                 raise ValueError(f"taxAmount is required for line item {line} if taxCode is provided")
             tax_rate = self._resolve_tax_rate(line)
             line["tax_rate"] = {
-                "tax_code": line.get("taxCode"),
-                "coverage": "INCLUSIVE" if line.get("taxInclusive") else "EXCLUSIVE",
+                "tax_code": line.pop("taxCode", None),
+                "coverage": "INCLUSIVE" if line.pop("taxInclusive", None) else "EXCLUSIVE",
                 "tax_amount": {
-                    "amount": line.get("taxAmount"),
+                    "amount": line.pop("taxAmount", 0),
                     "currency": currency
                 },
                 **tax_rate

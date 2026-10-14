@@ -145,7 +145,10 @@ class BillsSink(RilletSink):
                 mapped_expense["fields"] = self._resolve_custom_fields(expense["customFields"])
             if expense.get("service_period"):
                 mapped_expense["service_period"] = expense.get("service_period")
-            mapped_expense = self.map_line_taxes(expense, record.get("currency"))
+            for tax_field in ("taxCode", "taxAmount", "taxInclusive"):
+                if tax_field in expense:
+                    mapped_expense[tax_field] = expense[tax_field]
+            mapped_expense = self.map_line_taxes(mapped_expense, record.get("currency"))
             expenses.append(mapped_expense)
 
 
@@ -211,11 +214,6 @@ class FallbackSink(RilletSink):
             vendor_id = self._resolve_vendor(record)
             record["vendor_id"] = vendor_id
             record.pop("vendorName", None)
-        if self.supports_line_prepayments:
-            record[self.lines_field] = self.process_prepaid_lines(record.get(self.lines_field))
-        if self.supports_line_taxes:
-            for item in record.get(self.lines_field, []):
-                item = self.map_line_taxes(item, record.get("currency"))
         if self.supports_lookup_accounts:
             for item in record.get(self.lines_field, []):
                 if not item.get("account_code"):
@@ -224,6 +222,11 @@ class FallbackSink(RilletSink):
                 item.pop("accountNumber", None)
                 item.pop("accountName", None)
                 item.pop("accountId", None)
+        if self.supports_line_prepayments:
+            record[self.lines_field] = self.process_prepaid_lines(record.get(self.lines_field))
+        if self.supports_line_taxes:
+            for item in record.get(self.lines_field, []):
+                item = self.map_line_taxes(item, record.get("currency"))
         return record
 
 
