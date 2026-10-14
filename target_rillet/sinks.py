@@ -145,19 +145,10 @@ class BillsSink(RilletSink):
                 mapped_expense["fields"] = self._resolve_custom_fields(expense["customFields"])
             if expense.get("service_period"):
                 mapped_expense["service_period"] = expense.get("service_period")
-            if expense.get("taxCode"):
-                if not expense.get("taxAmount"):
-                    raise ValueError(f"taxAmount is required for line item {expense} if taxCode is provided")
-                tax_rate = self._resolve_tax_rate(expense)
-                mapped_expense["tax_rate"] = {
-                    "tax_code": expense.get("taxCode"),
-                    "coverage": "INCLUSIVE" if expense.get("taxInclusive") else "EXCLUSIVE",
-                    "tax_amount": {
-                        "amount": expense.get("taxAmount"),
-                        "currency": record.get("currency")
-                    },
-                    **tax_rate
-                }
+            for tax_field in ("taxCode", "taxAmount", "taxInclusive"):
+                if tax_field in expense:
+                    mapped_expense[tax_field] = expense[tax_field]
+            mapped_expense = self.map_line_taxes(mapped_expense, record.get("currency"))
             expenses.append(mapped_expense)
 
 
@@ -199,6 +190,8 @@ class FallbackSink(RilletSink):
     lookup_subsidiary = True
     lookup_vendor = False
     supports_line_prepayments = False
+    supports_line_taxes = False
+    supports_lookup_accounts = False
 
     @property
     def name(self) -> str:
@@ -221,8 +214,19 @@ class FallbackSink(RilletSink):
             vendor_id = self._resolve_vendor(record)
             record["vendor_id"] = vendor_id
             record.pop("vendorName", None)
+        if self.supports_lookup_accounts:
+            for item in record.get(self.lines_field, []):
+                if not item.get("account_code"):
+                    item["account_code"] = self._resolve_account(item)
+                # clean payload if needed
+                item.pop("accountNumber", None)
+                item.pop("accountName", None)
+                item.pop("accountId", None)
         if self.supports_line_prepayments:
             record[self.lines_field] = self.process_prepaid_lines(record.get(self.lines_field))
+        if self.supports_line_taxes:
+            for item in record.get(self.lines_field, []):
+                item = self.map_line_taxes(item, record.get("currency"))
         return record
 
 
@@ -249,6 +253,9 @@ class ChargesSink(FallbackSink):
     allows_upserts = False
     lookup_vendor = True
     api_version = "4"
+    supports_lookup_accounts = True
+    lines_field = "items"
+    supports_line_prepayments = True
 
     relation_fields = [
         {
@@ -256,19 +263,6 @@ class ChargesSink(FallbackSink):
             "objectName": "vendors",
         },
     ]
-
-    def preprocess_record(self, record: dict, context: dict) -> dict:
-        record = super().preprocess_record(record, context)
-        # resolve lines accounts
-        for item in record.get("items", []):
-            if not item.get("account_code"):
-                item["account_code"] = self._resolve_account(item)
-            # clean payload if needed
-            item.pop("accountNumber", None)
-            item.pop("accountName", None)
-            item.pop("accountId", None)
-        record["items"] = self.process_prepaid_lines(record.get("items"))
-        return record
     
     def upsert_record(self, record: dict, context: dict):
         """Create a reimbursement in Rillet, then upload any attachments."""
@@ -291,6 +285,9 @@ class ReimbursementsSink(FallbackSink):
     lookup_vendor = True
     supports_line_prepayments = True
     lines_field = "items"
+    supports_line_taxes = True
+    supports_lookup_accounts = True
+    api_version = "4"
 
     relation_fields = [
         {
