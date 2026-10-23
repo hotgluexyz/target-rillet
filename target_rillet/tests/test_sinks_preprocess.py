@@ -245,6 +245,24 @@ class TestBillsSinkPreprocessRecord:
             },
         ]
 
+    def test_maps_impact_date(self):
+        sink = make_sink(BillsSink, "Bills", lookup_cache=LOOKUP_CACHE)
+        sink._lookup_cache["accounts_with_prepaid_account"] = set()
+        payload = sink.preprocess_record(
+            {
+                "vendorId": "vendor-1",
+                "billNumber": "BILL-100",
+                "issueDate": "2024-01-01T00:00:00.000000Z",
+                "dueDate": "2024-01-31T00:00:00.000000Z",
+                "impactDate": "2026-10-19T00:00:00.000000Z",
+                "currency": "USD",
+                "expenses": [{"accountNumber": "6100", "amount": "1"}],
+            },
+            {},
+        )
+        assert payload["impact_date"] == "2026-10-19T00:00:00.000000Z"
+        assert payload["bill_date"] == "2024-01-01T00:00:00.000000Z"
+
     def test_resolves_subsidiary_from_name_when_id_missing(self):
         sink = make_sink(BillsSink, "Bills", lookup_cache=LOOKUP_CACHE)
         payload = sink.preprocess_record(
