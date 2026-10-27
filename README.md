@@ -139,7 +139,9 @@ SNAPSHOT_DIR=/durable/connection-scoped/snapshots .venv/bin/target-rillet --conf
   Creates use a deterministic UUID `Idempotency-Key` scoped to API environment,
   stream, and source ID. Existing explicit remote IDs retain update/skip semantics.
 - `SNAPSHOT_DIR` is **required for creates with externalId** and must be persisted
-  and restored across jobs for the same connection. `rillet-creates.json` stores
+  and restored across jobs for the same connection when running standalone.
+  Hotglue jobs may instead supply `JOB_ID`; the target then uses the SDK's snapshot
+  directory, `/home/hotglue/${JOB_ID}/snapshots`. `rillet-creates.json` stores
   request hashes and timestamps before POST and confirmed remote IDs immediately
   afterward, before receipt upload or SDK state output. Atomic replacement,
   file/directory fsync, and a local process lock protect the journal. Do not share

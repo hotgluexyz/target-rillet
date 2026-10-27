@@ -206,7 +206,14 @@ def test_failed_receipt_retains_document_and_fails_bookmark(monkeypatch, sink_cl
     request.assert_not_called()
 
 
-def test_confirmed_receipt_is_not_uploaded_again_with_rotated_url(monkeypatch):
+@pytest.mark.parametrize("job_directory", [False, True])
+def test_confirmed_receipt_is_not_uploaded_again_with_rotated_url(
+    monkeypatch, tmp_path, job_directory
+):
+    if job_directory:
+        monkeypatch.delenv("SNAPSHOT_DIR")
+        monkeypatch.setenv("JOB_ID", "receipt-job")
+        monkeypatch.setattr("target_rillet.client.SDK_SNAPSHOT_DIR", str(tmp_path))
     request = Mock(return_value=response())
     download = Mock(return_value=response())
     upload = Mock(return_value=response())
@@ -283,7 +290,14 @@ def test_pacing_shared_across_sinks(monkeypatch):
     assert sleep.call_args.args[0] == pytest.approx(0.85)
 
 
-def test_intent_exists_before_post_and_confirmation_survives_state_loss(monkeypatch, tmp_path):
+@pytest.mark.parametrize("job_directory", [False, True])
+def test_intent_exists_before_post_and_confirmation_survives_state_loss(
+    monkeypatch, tmp_path, job_directory
+):
+    if job_directory:
+        monkeypatch.delenv("SNAPSHOT_DIR")
+        monkeypatch.setenv("JOB_ID", "payment-job")
+        monkeypatch.setattr("target_rillet.client.SDK_SNAPSHOT_DIR", str(tmp_path))
     path = tmp_path / "rillet-creates.json"
 
     def post(**kwargs):

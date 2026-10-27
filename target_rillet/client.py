@@ -21,6 +21,7 @@ from hotglue_etl_exceptions import InvalidCredentialsError, InvalidPayloadError
 from hotglue_singer_sdk.exceptions import RetriableAPIError
 from hotglue_singer_sdk.plugin_base import PluginBase
 from hotglue_singer_sdk.target_sdk.client import HotglueSink
+from hotglue_singer_sdk.target_sdk.target import SNAPSHOT_DIR as SDK_SNAPSHOT_DIR
 
 from target_rillet.attachment_helpers import resolve_attachment_filename_and_type
 
@@ -262,7 +263,9 @@ class RilletSink(HotglueSink):
         Uses the sibling Spendesk target's atomic JSON journal pattern, with a
         process lock and directory fsync. SNAPSHOT_DIR must survive job replay.
         """
-        snapshot_dir = os.environ.get("SNAPSHOT_DIR")
+        snapshot_dir = os.environ.get("SNAPSHOT_DIR") or (
+            SDK_SNAPSHOT_DIR if os.environ.get("JOB_ID") else None
+        )
         if not snapshot_dir:
             raise ValueError("SNAPSHOT_DIR is required for durable Rillet create intents")
         directory = Path(snapshot_dir)
@@ -433,7 +436,9 @@ class RilletSink(HotglueSink):
         if not attachment_url:
             raise ValueError("Attachment URL is required")
 
-        snapshot_dir = os.environ.get("SNAPSHOT_DIR")
+        snapshot_dir = os.environ.get("SNAPSHOT_DIR") or (
+            SDK_SNAPSHOT_DIR if os.environ.get("JOB_ID") else None
+        )
         if not snapshot_dir:
             raise ValueError("SNAPSHOT_DIR is required for durable receipt intents")
         directory = Path(snapshot_dir)
