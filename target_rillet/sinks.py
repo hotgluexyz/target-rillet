@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from target_rillet.client import RilletSink
-from hotglue_singer_sdk.exceptions import FatalAPIError
 
 
 class JournalsSink(RilletSink):
@@ -117,6 +116,9 @@ class BillsSink(RilletSink):
             "status": record.get("status")
         }
 
+        if "impact_date" in record:
+            payload["impact_date"] = record["impact_date"]
+
         if record.get("id"):
             payload["id"] = record["id"]
 
@@ -141,19 +143,21 @@ class BillsSink(RilletSink):
                     "currency": record.get("currency")
                 },
             }
-            if expense.get("customFields"):
+            if "fields" in expense:
+                mapped_expense["fields"] = expense["fields"]
+            elif expense.get("customFields"):
                 mapped_expense["fields"] = self._resolve_custom_fields(expense["customFields"])
             if expense.get("service_period"):
                 mapped_expense["service_period"] = expense.get("service_period")
             if expense.get("taxCode"):
-                if not expense.get("taxAmount"):
+                if expense.get("taxAmount") in (None, ""):
                     raise ValueError(f"taxAmount is required for line item {expense} if taxCode is provided")
                 tax_rate = self._resolve_tax_rate(expense)
                 mapped_expense["tax_rate"] = {
                     "tax_code": expense.get("taxCode"),
                     "coverage": "INCLUSIVE" if expense.get("taxInclusive") else "EXCLUSIVE",
                     "tax_amount": {
-                        "amount": expense.get("taxAmount"),
+                        "amount": str(expense["taxAmount"]),
                         "currency": record.get("currency")
                     },
                     **tax_rate
@@ -166,17 +170,7 @@ class BillsSink(RilletSink):
 
     def upsert_record(self, record: dict, context: dict):
         """Create or update a bill in Rillet, then upload any attachments."""
-        attachments = record.pop("attachments", [])
-        id, success, state_updates = super().upsert_record(record, context)
-
-        try:
-            if id and attachments:
-                for index, attachment in enumerate(attachments):
-                    self.post_attachment(id, attachment, index)
-        except Exception as e:
-            self.logger.info(f"Error posting attachments to bill {id}: {e}")
-
-        return id, success, state_updates
+        return self.upsert_with_attachments(record, context)
 
 
 class UnsupportedSink(RilletSink):
@@ -272,17 +266,7 @@ class ChargesSink(FallbackSink):
     
     def upsert_record(self, record: dict, context: dict):
         """Create a reimbursement in Rillet, then upload any attachments."""
-        attachments = record.pop("attachments", [])
-        id, success, state_updates = super().upsert_record(record, context)
-
-        try:
-            if id and attachments:
-                for index, attachment in enumerate(attachments):
-                    self.post_attachment(id, attachment, index)
-        except Exception as e:
-            self.logger.info(f"Error posting attachments to reimbursement {id}: {e}")
-
-        return id, success, state_updates
+        return self.upsert_with_attachments(record, context)
 
 
 class ReimbursementsSink(FallbackSink):
@@ -301,17 +285,7 @@ class ReimbursementsSink(FallbackSink):
 
     def upsert_record(self, record: dict, context: dict):
         """Create a reimbursement in Rillet, then upload any attachments."""
-        attachments = record.pop("attachments", [])
-        id, success, state_updates = super().upsert_record(record, context)
-
-        try:
-            if id and attachments:
-                for index, attachment in enumerate(attachments):
-                    self.post_attachment(id, attachment, index)
-        except Exception as e:
-            self.logger.info(f"Error posting attachments to reimbursement {id}: {e}")
-
-        return id, success, state_updates
+        return self.upsert_with_attachments(record, context)
 
 
 class VendorCreditsSink(FallbackSink):
@@ -335,12 +309,31 @@ class VendorsSink(FallbackSink):
         record = super().preprocess_record(record, context)
         # lookup vendor by name to not create duplicates
         existing_vendor = self._resolve_vendor(record, full_object=True)
-        payload = existing_vendor.copy() if existing_vendor else record
+        payload = record.copy()
         if existing_vendor:
-            payload.update({k:v for k,v in record.items() if k not in self._read_only_fields and v not in [None, ""]})
+            payload["id"] = existing_vendor["id"]
         return payload
 
     def upsert_record(self, record: dict, context: dict):
+        record = record.copy()
+        # PUT replaces omitted fields. Never use the list cache as the merge base.
+        writable = {"name", "account_code", "address", "email", "payment_terms", "external_references", "ten_ninety_nine_eligible", "tax_id", "fields"}
+        if record.get("id"):
+            current = self.request_api("GET", endpoint=f"/vendors/{record['id']}").json()
+            merged = {key: value for key, value in current.items() if key in writable}
+            for key, value in record.items():
+                if key in writable and value not in (None, ""):
+                    if key == "address" and isinstance(value, dict):
+                        value = {**(merged.get("address") or {}), **value}
+                    if key == "external_references":
+                        references = {}
+                        for reference in (merged.get(key) or []) + value:
+                            references.setdefault((reference["type"], reference["id"]), reference)
+                        value = list(references.values())
+                    merged[key] = value
+            record = {**merged, "id": record["id"]}
+        else:
+            record = {key: value for key, value in record.items() if key in writable or key in {"externalId", "externalid"}}
         vendor_name = record.get("name")
         record_id, success, state_updates = super().upsert_record(record, context)
         if success and record_id and vendor_name:
@@ -385,32 +378,13 @@ class BillPaymentsSink(FallbackSink):
         },
     ]
         
-    def handle_over_payment_error(self, bill_id: str) -> None:
-        # When Rillet's Auto Rec is enabled and in the Cash account it identifies a corresponding bank transaction for a bill, 
-        # Rillet creates the bill payment journal entry and automatically matches the transaction. This marks the bill as paid on the Rillet side.
-        # So when we receive the corresponding bill_payment application we get an error saying we're trying to over pay the bill.
-        # To handle this, we fetch the bill payment generated by Rillet and use the id to mark the payment as existing.
-        bill_payments = self.request_api("GET", endpoint=f"/bills/{bill_id}/payments")
-        bill_payments = bill_payments.json().get("payments")
-        if bill_payments:
-            bill_payment_id = bill_payments[0].get("id")
-            self.logger.info(f"Found payment for bill {bill_id}. Marking bill payment as existing.")
-            return bill_payment_id, True, {"existing": True}
-
-        raise FatalAPIError(f"Bill is marked as paid but no payment was found for bill {bill_id}")
-
     def upsert_record(self, record: dict, context: dict):
         bill_id = record.get("bill_id", None)
         if not bill_id:
             raise ValueError("bill_id is required")
         self.endpoint = f"/bills/{bill_id}/payments"
-        try:
-            return super().upsert_record(record, context)
-        except Exception as e:
-            if "Tried to over pay expense" in str(e):
-                id, success, state_updates = self.handle_over_payment_error(bill_id)
-                return id, success, state_updates
-            raise e
+        # A paid bill (or a matching amount) does not establish payment identity.
+        return super().upsert_record(record, context)
 
 
 class VendorCreditsPaymentsSink(FallbackSink):

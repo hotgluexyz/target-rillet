@@ -23,6 +23,7 @@ SAMPLE_CONFIG = {
 }
 
 LOOKUP_CACHE = {
+    "accounts_with_prepaid_account": set(),
     "accounts": {
         "Office Supplies": "6100",
         "Travel": "6200",
@@ -348,7 +349,7 @@ class TestReimbursementsSinkPreprocessRecord:
             ReimbursementsSink, "reimbursements", lookup_cache=LOOKUP_CACHE
         )
         payload = sink.preprocess_record(
-            {"vendor_id": "vendor-1", "subsidiaryId": "sub-99"},
+            {"vendor_id": "vendor-1", "subsidiaryId": "sub-99", "items": []},
             {},
         )
         assert payload["subsidiary_id"] == "sub-99"

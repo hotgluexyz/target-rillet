@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import random
+import threading
+import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Dict, List, Optional
+from uuid import NAMESPACE_URL, uuid5
 
 import requests
-from hotglue_singer_sdk.plugin_base import PluginBase
-from hotglue_singer_sdk.target_sdk.client import HotglueSink
 from hotglue_etl_exceptions import InvalidCredentialsError, InvalidPayloadError
 from hotglue_singer_sdk.exceptions import RetriableAPIError
+from hotglue_singer_sdk.plugin_base import PluginBase
+from hotglue_singer_sdk.target_sdk.client import HotglueSink
+
 from target_rillet.attachment_helpers import resolve_attachment_filename_and_type
 
 
@@ -42,6 +49,24 @@ class RilletSink(HotglueSink):
     ) -> None:
         self._lookup_cache: dict = {}
         super().__init__(target, stream_name, schema, key_properties)
+        if not hasattr(target, "_rillet_request_lock"):
+            target._rillet_request_lock = threading.Lock()
+            target._rillet_last_request = None
+
+    def process_record(self, record: dict, context: dict) -> None:
+        # SDK 1.0.51 removes externalId both before mapping and before upsert.
+        # Keep it in per-record context, not mutable sink state or the HTTP body.
+        context = dict(context)
+        context["_rillet_external_id"] = record.get("externalId") or record.get("externalid")
+        return super().process_record(record.copy(), context)
+
+    def _pace_request(self) -> None:
+        # Shared by all sinks in this target; leave headroom below 60/minute.
+        with self._target._rillet_request_lock:
+            last = self._target._rillet_last_request
+            if last is not None:
+                time.sleep(max(0, 1.05 - (time.monotonic() - last)))
+            self._target._rillet_last_request = time.monotonic()
 
     @property
     def auth_headers(self) -> dict:
@@ -61,15 +86,44 @@ class RilletSink(HotglueSink):
         url = f"{self.get_base_url()}{endpoint or self.endpoint}"
         merged_headers = {**self.auth_headers, **(headers or {})}
 
-        response = requests.request(
-            method=http_method,
-            url=url,
-            params=params,
-            json=request_data,
-            headers=merged_headers,
+        retry_safe = http_method.upper() in {"GET", "PUT", "DELETE"} or bool(
+            merged_headers.get("Idempotency-Key")
         )
-        self.validate_response(response)
-        return response
+        for attempt in range(4):
+            self._pace_request()
+            try:
+                response = requests.request(
+                    method=http_method,
+                    url=url,
+                    params=params,
+                    json=request_data,
+                    headers=merged_headers,
+                    timeout=(10, 60),
+                )
+            except (requests.Timeout, requests.ConnectionError):
+                if not retry_safe or attempt == 3:
+                    raise
+                delay = 2 ** attempt + random.uniform(0, 1)
+            else:
+                if not (response.status_code == 429 or 500 <= response.status_code < 600):
+                    self.validate_response(response)
+                    return response
+                if not retry_safe or attempt == 3:
+                    self.validate_response(response)
+                delay = 2 ** attempt + random.uniform(0, 1)
+                retry_after = response.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        delay = max(delay, float(retry_after))
+                    except ValueError:
+                        try:
+                            delay = max(delay, (parsedate_to_datetime(retry_after) - datetime.now(timezone.utc)).total_seconds())
+                        except (ValueError, TypeError):
+                            pass
+                # Do not retry earlier than requested when the wait is excessive.
+                if delay > 120:
+                    self.validate_response(response)
+            time.sleep(delay)
 
     def get_error_message(self, response: requests.Response) -> str:
         try:
@@ -170,6 +224,8 @@ class RilletSink(HotglueSink):
 
     def upsert_record(self, record: dict, context: dict):
         """Create or update a journal entry in Rillet."""
+        record = record.copy()
+        external_id = record.pop("externalId", None) or record.pop("externalid", None) or context.get("_rillet_external_id")
         state_updates = dict()
         method = "POST"
         endpoint = self.endpoint
@@ -184,8 +240,32 @@ class RilletSink(HotglueSink):
             self.logger.warning(f"Record {record.get('id')} for {self.name} sink already exists in Rillet and upserts are not allowed. Skipping...")
             return record.get("id"), True, {"existing": True}
 
-        response = self.request_api(method, endpoint=endpoint, request_data=record)
-        return response.json().get("id"), True, state_updates
+        headers = {}
+        if method == "POST" and external_id not in (None, ""):
+            scope = f"{self.get_base_url()}:{self.name}:{external_id}"
+            headers["Idempotency-Key"] = str(uuid5(NAMESPACE_URL, scope))
+        response = self.request_api(method, endpoint=endpoint, request_data=record, headers=headers)
+        record_id = response.json().get("id")
+        if not record_id:
+            raise ValueError("Rillet response has no id; reconcile remotely before retrying")
+        return record_id, True, state_updates
+
+    def upsert_with_attachments(self, record: dict, context: dict):
+        """Preserve confirmed document mappings; report receipt failures separately."""
+        record = record.copy()
+        attachments = record.pop("attachments", [])
+        record_id, success, updates = result = RilletSink.upsert_record(self, record, context)
+        if record_id and success and not updates.get("existing"):
+            errors = []
+            for index, attachment in enumerate(attachments):
+                try:
+                    self.post_attachment(record_id, attachment, index)
+                except Exception as error:
+                    self.logger.exception("Attachment upload failed for %s %s", self.name, record_id)
+                    errors.append({"id": attachment.get("id"), "error": str(error)})
+            if errors:
+                updates["attachment_errors"] = errors
+        return result
 
     def _resolve_subsidiary(self, record: dict) -> str:
         """Resolve subsidiary ID from direct ID or cached name lookup."""
@@ -283,31 +363,35 @@ class RilletSink(HotglueSink):
         return f"{record_id}_{index}"
 
     def post_attachment(self, record_id: str, attachment: dict, index: int) -> None:
-        """Download an attachment by URL and upload it to a Rillet entity."""
+        """Upload a receipt once; do not automatically retry ambiguous uploads."""
         attachment_url = attachment.get("url")
         if not attachment_url:
             raise ValueError("Attachment URL is required")
 
-        resp = requests.get(attachment_url)
+        resp = requests.get(attachment_url, timeout=(10, 60))
+        resp.raise_for_status()
         content = resp.content
         content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-
         att_name = self.get_attachment_name(record_id, attachment, index)
         filename, content_type = resolve_attachment_filename_and_type(
             att_name, content, content_type
         )
-
         files = {"file": (filename, content, content_type)}
         multipart_headers = {
             "Authorization": f"Bearer {self.config.get('api_key')}",
             "X-Rillet-API-Version": self.api_version,
         }
+        self._pace_request()
         response = requests.post(
             f"{self.get_base_url()}{self.endpoint}/{record_id}",
             files=files,
             headers=multipart_headers,
+            timeout=(10, 60),
         )
+        response.raise_for_status()
         self.validate_response(response)
+        if not 200 <= response.status_code < 300:
+            raise ValueError("Receipt upload did not return a successful HTTP status")
 
     def process_prepaid_lines(self, lines: dict) -> list[dict]:
         """Process prepaid lines for a record."""
