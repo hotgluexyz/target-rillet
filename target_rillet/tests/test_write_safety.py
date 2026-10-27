@@ -1,13 +1,13 @@
 """Observable request and SDK bookmark contracts for safe financial writes."""
 
+import io
 import json
-import time
 from copy import deepcopy
-from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 import requests
+from hotglue_singer_sdk.target_sdk import target as sdk_target
 
 from target_rillet.sinks import (
     BillPaymentsSink,
@@ -17,6 +17,7 @@ from target_rillet.sinks import (
     ReimbursementsSink,
     VendorsSink,
 )
+from target_rillet.target import TargetRillet
 from target_rillet.tests.test_sinks_preprocess import LOOKUP_CACHE, make_sink
 
 
@@ -30,8 +31,8 @@ def response(status=200, body=None, headers=None):
 
 
 @pytest.fixture(autouse=True)
-def no_real_network(monkeypatch, tmp_path):
-    monkeypatch.setenv("SNAPSHOT_DIR", str(tmp_path))
+def no_real_network(monkeypatch):
+    monkeypatch.delenv("SNAPSHOT_DIR", raising=False)
     monkeypatch.setattr("requests.request", Mock(side_effect=AssertionError("Unexpected HTTP")))
     monkeypatch.setattr("requests.get", Mock(side_effect=AssertionError("Unexpected download")))
     monkeypatch.setattr("requests.post", Mock(side_effect=AssertionError("Unexpected upload")))
@@ -67,7 +68,7 @@ def test_sdk_preserves_source_id_and_stable_key_across_lost_response_and_runs(mo
     request.return_value = response()
     fresh = make_sink(BillsSink, "Bills", lookup_cache=deepcopy(LOOKUP_CACHE))
     fresh.process_record(record, {})
-    assert request.call_count == 3  # Confirmed intent, even without SDK state.
+    assert request.call_count == 4  # No restored mapping: reuse the provider key.
     assert request.call_args.kwargs["headers"]["Idempotency-Key"] == keys[0]
     fresh.process_record({**record, "externalId": "different"}, {})
     assert request.call_args.kwargs["headers"]["Idempotency-Key"] != keys[0]
@@ -162,7 +163,9 @@ def test_bill_tax_code_still_requires_tax_amount(tax_amount):
     [(BillsSink, "Bills"), (ChargesSink, "charges"), (ReimbursementsSink, "reimbursements")],
 )
 @pytest.mark.parametrize("stage", ["download", "upload"])
-def test_failed_receipt_retains_document_and_fails_bookmark(monkeypatch, sink_class, stream, stage):
+def test_failed_receipt_preserves_successful_document_mapping(
+    monkeypatch, sink_class, stream, stage
+):
     request = Mock(return_value=response())
     download = Mock(return_value=response(404 if stage == "download" else 200))
     upload = Mock(return_value=response(500))
@@ -183,53 +186,35 @@ def test_failed_receipt_retains_document_and_fails_bookmark(monkeypatch, sink_cl
     record["attachments"] = [{"url": "https://example.com/receipt.pdf"}]
     sink.process_record(record, {})
     state = sink.latest_state["bookmarks"][stream][-1]
-    assert state["success"] is False
-    assert state["id"] == state["document_id"] == "remote-1"
+    assert state["success"] is True
+    assert state["id"] == "remote-1"
     assert state["externalId"] == record["externalId"]
-    assert "Attachment upload failed" in state["error"]
-    assert sink.latest_state["summary"][stream]["fail"] == 1
+    assert len(state["attachment_errors"]) == 1
+    assert state["attachment_errors"][0]["error"]
+    assert sink.latest_state["summary"][stream]["fail"] == 0
     assert upload.call_count == (stage == "upload")
     assert download.call_args.kwargs["timeout"] == (10, 60)
     if stage == "upload":
         assert upload.call_args.kwargs["timeout"] == (10, 60)
-    # Even after receipt failure and lost SDK state, never create the document again.
-    request.reset_mock()
-    download.return_value = response()
-    upload.return_value = response()
-    fresh = make_sink(sink_class, stream, lookup_cache=deepcopy(LOOKUP_CACHE))
-    fresh.process_record(record, {})
-    replay = fresh.latest_state["bookmarks"][stream][-1]
-    assert replay["success"] is (stage == "download")
-    if stage == "upload":
-        assert "Unresolved receipt upload intent" in replay["error"]
-    assert upload.call_count == 1
-    request.assert_not_called()
 
 
-@pytest.mark.parametrize("job_directory", [False, True])
-def test_confirmed_receipt_is_not_uploaded_again_with_rotated_url(
-    monkeypatch, tmp_path, job_directory
-):
-    if job_directory:
-        monkeypatch.delenv("SNAPSHOT_DIR")
-        monkeypatch.setenv("JOB_ID", "receipt-job")
-        monkeypatch.setattr("target_rillet.client.SDK_SNAPSHOT_DIR", str(tmp_path))
-    request = Mock(return_value=response())
-    download = Mock(return_value=response())
+def test_receipt_failure_does_not_skip_remaining_attachments(monkeypatch):
+    monkeypatch.setattr("requests.request", Mock(return_value=response()))
+    download = Mock(side_effect=[response(404), response()])
     upload = Mock(return_value=response())
-    monkeypatch.setattr("requests.request", request)
     monkeypatch.setattr("requests.get", download)
     monkeypatch.setattr("requests.post", upload)
     record = bill_record()
-    record["attachments"] = [{"id": "receipt-1", "url": "https://example.com/old"}]
+    record["attachments"] = [
+        {"id": "missing", "url": "https://example.com/missing"},
+        {"id": "available", "url": "https://example.com/available"},
+    ]
     sink = make_sink(BillsSink, "Bills", lookup_cache=deepcopy(LOOKUP_CACHE))
     sink.process_record(record, {})
-    assert sink.latest_state["bookmarks"]["Bills"][-1]["success"] is True
-    record["attachments"][0]["url"] = "https://example.com/new"
-    fresh = make_sink(BillsSink, "Bills", lookup_cache=deepcopy(LOOKUP_CACHE))
-    fresh.process_record(record, {})
-    assert fresh.latest_state["bookmarks"]["Bills"][-1]["success"] is True
-    assert request.call_count == download.call_count == upload.call_count == 1
+    state = sink.latest_state["bookmarks"]["Bills"][-1]
+    assert state["success"] is True
+    assert [error["id"] for error in state["attachment_errors"]] == ["missing"]
+    assert upload.call_count == 1
 
 
 def test_vendor_put_uses_fresh_get_and_preserves_omitted_fields(monkeypatch):
@@ -290,96 +275,57 @@ def test_pacing_shared_across_sinks(monkeypatch):
     assert sleep.call_args.args[0] == pytest.approx(0.85)
 
 
-@pytest.mark.parametrize("job_directory", [False, True])
-def test_intent_exists_before_post_and_confirmation_survives_state_loss(
-    monkeypatch, tmp_path, job_directory
-):
-    if job_directory:
-        monkeypatch.delenv("SNAPSHOT_DIR")
-        monkeypatch.setenv("JOB_ID", "payment-job")
-        monkeypatch.setattr("target_rillet.client.SDK_SNAPSHOT_DIR", str(tmp_path))
-    path = tmp_path / "rillet-creates.json"
+@pytest.mark.parametrize("stream", ["charges", "bill_payments"])
+def test_singer_replay_uses_only_standard_remote_id_snapshots(monkeypatch, tmp_path, stream):
+    monkeypatch.setattr(sdk_target, "SNAPSHOT_DIR", str(tmp_path))
+    monkeypatch.setattr(sdk_target, "flow_id", "test-flow")
 
-    def post(**kwargs):
-        intent = next(iter(json.loads(path.read_text()).values()))
-        assert "id" not in intent and intent["payload_hash"]
+    def api(**kwargs):
+        if kwargs["method"] == "GET":
+            return response(body={"vendors": LOOKUP_CACHE["vendors"], "accounts": []})
         return response()
 
-    request = Mock(side_effect=post)
+    request = Mock(side_effect=api)
     monkeypatch.setattr("requests.request", request)
-    sink = make_sink(BillPaymentsSink, "bill_payments")
-    record = {
-        "externalId": "pay-1",
-        "bill_id": "bill-1",
-        "amount": {"amount": "10", "currency": "EUR"},
-    }
-    assert sink.upsert_record(record, {})[:2] == ("remote-1", True)
-    journal = json.loads(path.read_text())
-    assert next(iter(journal.values()))["id"] == "remote-1"
-    next(iter(journal.values()))["created_at"] = time.time() - 90000
-    path.write_text(json.dumps(journal))
-    fresh = make_sink(BillPaymentsSink, "bill_payments")
-    assert fresh.upsert_record(record, {}) == ("remote-1", True, {"existing": True})
-    assert request.call_count == 1
-    with pytest.raises(ValueError, match="payload changed"):
-        fresh.upsert_record({**record, "amount": {"amount": "11", "currency": "EUR"}}, {})
-    with pytest.raises(ValueError, match="payload changed"):
-        fresh.upsert_record({**record, "bill_id": "different-parent"}, {})
-    assert request.call_count == 1
-
-
-def test_unresolved_intent_retries_same_key_only_within_window(monkeypatch, tmp_path):
-    request = Mock(side_effect=requests.ReadTimeout())
-    monkeypatch.setattr("requests.request", request)
-    record = {"externalId": "pay-1", "bill_id": "bill-1"}
-    sink = make_sink(BillPaymentsSink, "bill_payments")
-    with pytest.raises(requests.ReadTimeout):
-        sink.upsert_record(record, {})
-    key = request.call_args.kwargs["headers"]["Idempotency-Key"]
-    path = tmp_path / "rillet-creates.json"
-    journal = json.loads(path.read_text())
-    assert "id" not in journal[key]
-    # An old unknown outcome blocks, regardless of fresh SDK state.
-    journal[key]["created_at"] = time.time() - 90000
-    path.write_text(json.dumps(journal))
-    fresh = make_sink(BillPaymentsSink, "bill_payments")
-    with pytest.raises(ValueError, match="24h"):
-        fresh.upsert_record(record, {})
-    assert request.call_count == 4
-    journal[key]["created_at"] = time.time()
-    path.write_text(json.dumps(journal))
-    request.side_effect = None
-    request.return_value = response()
-    assert fresh.upsert_record(record, {})[:2] == ("remote-1", True)
-    assert request.call_args.kwargs["headers"]["Idempotency-Key"] == key
-
-
-def test_missing_or_corrupt_journal_fails_before_post(monkeypatch, tmp_path):
-    request = Mock(return_value=response())
-    monkeypatch.setattr("requests.request", request)
-    sink = make_sink(FallbackSink, "custom")
-    monkeypatch.delenv("SNAPSHOT_DIR")
-    with pytest.raises(ValueError, match="SNAPSHOT_DIR"):
-        sink.upsert_record({"externalId": "one"}, {})
-    monkeypatch.setenv("SNAPSHOT_DIR", str(tmp_path))
-    Path(tmp_path / "rillet-creates.json").write_text("not json")
-    with pytest.raises(ValueError):
-        sink.upsert_record({"externalId": "one"}, {})
-    request.assert_not_called()
-
-
-def test_retry_stops_if_intent_expires_between_attempts(monkeypatch):
-    now = [100]
-
-    def ambiguous_response(**kwargs):
-        now[0] += 86401
-        return response(503)
-
-    request = Mock(side_effect=ambiguous_response)
-    monkeypatch.setattr("requests.request", request)
-    sink = make_sink(BillPaymentsSink, "bill_payments")
-    # New intent, first request inside window, retry beyond expiry.
-    monkeypatch.setattr("target_rillet.client.time.time", lambda: now[0])
-    with pytest.raises(ValueError, match="24h"):
-        sink.upsert_record({"externalId": "payment-1", "bill_id": "bill-1"}, {})
-    assert request.call_count == 1
+    download = Mock(return_value=response(404))
+    monkeypatch.setattr("requests.get", download)
+    record = {"externalId": "source-1"}
+    if stream == "charges":
+        record.update(
+            vendor_id="vendor-1",
+            subsidiary_id="sub-1",
+            items=[],
+            attachments=[{"id": "receipt-1", "url": "https://example.com/missing"}],
+        )
+    else:
+        record.update(bill_id="bill-1", amount={"amount": "10", "currency": "EUR"})
+    messages = [
+        {
+            "type": "SCHEMA",
+            "stream": stream,
+            "key_properties": ["externalId"],
+            "schema": {"type": "object", "properties": {key: {} for key in record}},
+        },
+        {"type": "RECORD", "stream": stream, "record": record},
+    ]
+    states = []
+    for replay in (False, True):
+        target = TargetRillet(config={"api_key": "test-key"})
+        try:
+            target.listen(io.StringIO("\n".join(json.dumps(message) for message in messages)))
+            state = target._latest_state["bookmarks"][stream][-1]
+            states.append(state)
+            assert state["success"] is True and state["id"] == "remote-1"
+            assert state["externalId"] == "source-1"
+            if not replay:
+                (tmp_path / f"{stream}_test-flow.snapshot.csv").write_text(
+                    "InputId,RemoteId\nsource-1,remote-1\n"
+                )
+        finally:
+            target._shutdown_requested.set()
+            target.signal_listener_thread.join(timeout=1)
+    assert sum(call.kwargs["method"] == "POST" for call in request.call_args_list) == 1
+    assert download.call_count == (stream == "charges")
+    if stream == "charges":
+        assert states[0]["attachment_errors"]
+    assert [path.name for path in tmp_path.iterdir()] == [f"{stream}_test-flow.snapshot.csv"]
