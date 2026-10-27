@@ -2,13 +2,26 @@
 
 from __future__ import annotations
 
+import fcntl
+import hashlib
+import json
+import os
+import random
+import tempfile
+import threading
+import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from pathlib import Path
 from typing import Dict, List, Optional
+from uuid import NAMESPACE_URL, uuid5
 
 import requests
-from hotglue_singer_sdk.plugin_base import PluginBase
-from hotglue_singer_sdk.target_sdk.client import HotglueSink
 from hotglue_etl_exceptions import InvalidCredentialsError, InvalidPayloadError
 from hotglue_singer_sdk.exceptions import RetriableAPIError
+from hotglue_singer_sdk.plugin_base import PluginBase
+from hotglue_singer_sdk.target_sdk.client import HotglueSink
+
 from target_rillet.attachment_helpers import resolve_attachment_filename_and_type
 
 
@@ -42,6 +55,24 @@ class RilletSink(HotglueSink):
     ) -> None:
         self._lookup_cache: dict = {}
         super().__init__(target, stream_name, schema, key_properties)
+        if not hasattr(target, "_rillet_request_lock"):
+            target._rillet_request_lock = threading.Lock()
+            target._rillet_last_request = None
+
+    def process_record(self, record: dict, context: dict) -> None:
+        # SDK 1.0.51 removes externalId both before mapping and before upsert.
+        # Keep it in per-record context, not mutable sink state or the HTTP body.
+        context = dict(context)
+        context["_rillet_external_id"] = record.get("externalId") or record.get("externalid")
+        return super().process_record(record.copy(), context)
+
+    def _pace_request(self) -> None:
+        # Shared by all sinks in this target; leave headroom below 60/minute.
+        with self._target._rillet_request_lock:
+            last = self._target._rillet_last_request
+            if last is not None:
+                time.sleep(max(0, 1.05 - (time.monotonic() - last)))
+            self._target._rillet_last_request = time.monotonic()
 
     @property
     def auth_headers(self) -> dict:
@@ -56,20 +87,51 @@ class RilletSink(HotglueSink):
             return "https://sandbox.api.rillet.com"
         return self.base_url
 
-    def request_api(self, http_method, endpoint=None, params=None, request_data=None, headers=None):
+    def request_api(self, http_method, endpoint=None, params=None, request_data=None, headers=None, create_deadline=None):
         """Make an authenticated request to the Rillet API."""
         url = f"{self.get_base_url()}{endpoint or self.endpoint}"
         merged_headers = {**self.auth_headers, **(headers or {})}
 
-        response = requests.request(
-            method=http_method,
-            url=url,
-            params=params,
-            json=request_data,
-            headers=merged_headers,
+        retry_safe = http_method.upper() in {"GET", "PUT", "DELETE"} or bool(
+            merged_headers.get("Idempotency-Key")
         )
-        self.validate_response(response)
-        return response
+        for attempt in range(4):
+            self._pace_request()
+            if create_deadline is not None and time.time() >= create_deadline:
+                raise ValueError("Rillet create intent reached its 24h retry deadline; reconcile remotely")
+            try:
+                response = requests.request(
+                    method=http_method,
+                    url=url,
+                    params=params,
+                    json=request_data,
+                    headers=merged_headers,
+                    timeout=(10, 60),
+                )
+            except (requests.Timeout, requests.ConnectionError):
+                if not retry_safe or attempt == 3:
+                    raise
+                delay = 2 ** attempt + random.uniform(0, 1)
+            else:
+                if not (response.status_code == 429 or 500 <= response.status_code < 600):
+                    self.validate_response(response)
+                    return response
+                if not retry_safe or attempt == 3:
+                    self.validate_response(response)
+                delay = 2 ** attempt + random.uniform(0, 1)
+                retry_after = response.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        delay = max(delay, float(retry_after))
+                    except ValueError:
+                        try:
+                            delay = max(delay, (parsedate_to_datetime(retry_after) - datetime.now(timezone.utc)).total_seconds())
+                        except (ValueError, TypeError):
+                            pass
+                # Do not retry earlier than requested when the wait is excessive.
+                if delay > 120:
+                    self.validate_response(response)
+            time.sleep(delay)
 
     def get_error_message(self, response: requests.Response) -> str:
         try:
@@ -170,6 +232,8 @@ class RilletSink(HotglueSink):
 
     def upsert_record(self, record: dict, context: dict):
         """Create or update a journal entry in Rillet."""
+        record = record.copy()
+        external_id = record.pop("externalId", None) or record.pop("externalid", None) or context.get("_rillet_external_id")
         state_updates = dict()
         method = "POST"
         endpoint = self.endpoint
@@ -184,8 +248,89 @@ class RilletSink(HotglueSink):
             self.logger.warning(f"Record {record.get('id')} for {self.name} sink already exists in Rillet and upserts are not allowed. Skipping...")
             return record.get("id"), True, {"existing": True}
 
-        response = self.request_api(method, endpoint=endpoint, request_data=record)
+        headers = {}
+        if method == "POST" and external_id not in (None, ""):
+            scope = f"{self.get_base_url()}:{self.name}:{external_id}"
+            headers["Idempotency-Key"] = str(uuid5(NAMESPACE_URL, scope))
+            return self._create_with_intent(endpoint, record, headers)
+        response = self.request_api(method, endpoint=endpoint, request_data=record, headers=headers)
         return response.json().get("id"), True, state_updates
+
+    def _create_with_intent(self, endpoint: str, record: dict, headers: dict):
+        """Persist before POST and immediately after confirmation, before SDK state.
+
+        Uses the sibling Spendesk target's atomic JSON journal pattern, with a
+        process lock and directory fsync. SNAPSHOT_DIR must survive job replay.
+        """
+        snapshot_dir = os.environ.get("SNAPSHOT_DIR")
+        if not snapshot_dir:
+            raise ValueError("SNAPSHOT_DIR is required for durable Rillet create intents")
+        directory = Path(snapshot_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / "rillet-creates.json"
+        key = headers["Idempotency-Key"]
+        payload_hash = hashlib.sha256(
+            json.dumps([endpoint, record], sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        ).hexdigest()
+        with (directory / "rillet-creates.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            journal = json.loads(path.read_text()) if path.exists() else {}
+            intent = journal.get(key)
+            if intent:
+                if intent["payload_hash"] != payload_hash:
+                    raise ValueError("Rillet create payload changed for the same externalId; reconcile the create intent before retrying")
+                if intent.get("id"):
+                    return intent["id"], True, {"existing": True}
+                if not 0 <= time.time() - intent["created_at"] < 24 * 60 * 60:
+                    raise ValueError("Unresolved Rillet create intent is outside the 24h idempotency window; reconcile remotely before retrying")
+            else:
+                intent = {"payload_hash": payload_hash, "created_at": time.time()}
+                journal[key] = intent
+                self._write_create_journal(path, journal)
+            response = self.request_api(
+                "POST", endpoint=endpoint, request_data=record, headers=headers,
+                create_deadline=intent["created_at"] + 24 * 60 * 60,
+            )
+            record_id = response.json().get("id")
+            if not record_id:
+                raise ValueError("Rillet create response has no id; intent remains unresolved")
+            intent["id"] = record_id
+            self._write_create_journal(path, journal)
+            return record_id, True, {}
+
+    @staticmethod
+    def _write_create_journal(path: Path, journal: dict) -> None:
+        # Fail closed on corrupt/unwritable journals; never discard unknown writes.
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as handle:
+                temporary = Path(handle.name)
+                json.dump(journal, handle)
+                handle.flush()
+                os.fsync(handle.fileno())
+            temporary.replace(path)
+            directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+    def upsert_with_attachments(self, record: dict, context: dict):
+        """Retain the created document ID even when receipt upload fails."""
+        record = record.copy()
+        attachments = record.pop("attachments", [])
+        record_id, success, updates = result = RilletSink.upsert_record(self, record, context)
+        try:
+            if record_id and success:
+                for index, attachment in enumerate(attachments):
+                    self.post_attachment(record_id, attachment, index)
+        except Exception as error:
+            updates.pop("existing", None)
+            return record_id, False, {**updates, "error": f"Attachment upload failed: {error}", "document_id": record_id}
+        return result
 
     def _resolve_subsidiary(self, record: dict) -> str:
         """Resolve subsidiary ID from direct ID or cached name lookup."""
@@ -283,31 +428,62 @@ class RilletSink(HotglueSink):
         return f"{record_id}_{index}"
 
     def post_attachment(self, record_id: str, attachment: dict, index: int) -> None:
-        """Download an attachment by URL and upload it to a Rillet entity."""
+        """Journal receipt identity and outcome; never replay an unknown upload."""
         attachment_url = attachment.get("url")
         if not attachment_url:
             raise ValueError("Attachment URL is required")
 
-        resp = requests.get(attachment_url)
-        content = resp.content
-        content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        snapshot_dir = os.environ.get("SNAPSHOT_DIR")
+        if not snapshot_dir:
+            raise ValueError("SNAPSHOT_DIR is required for durable receipt intents")
+        directory = Path(snapshot_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / "rillet-creates.json"
+        identity = ["id", str(attachment["id"])] if attachment.get("id") else ["url", attachment_url]
+        key = hashlib.sha256(json.dumps(
+            [self.get_base_url(), self.endpoint, str(record_id), identity]
+        ).encode()).hexdigest()
+        with (directory / "rillet-creates.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            journal = json.loads(path.read_text()) if path.exists() else {}
+            receipts = journal.setdefault("_receipts", {})
+            intent = receipts.get(key)
+            if intent:
+                if intent.get("status") == "confirmed":
+                    return
+                raise ValueError("Unresolved receipt upload intent; reconcile the receipt remotely before retrying")
 
-        att_name = self.get_attachment_name(record_id, attachment, index)
-        filename, content_type = resolve_attachment_filename_and_type(
-            att_name, content, content_type
-        )
+            # Download failures cannot have uploaded anything and remain retryable.
+            resp = requests.get(attachment_url, timeout=(10, 60))
+            resp.raise_for_status()
+            content = resp.content
+            content_type = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
 
-        files = {"file": (filename, content, content_type)}
-        multipart_headers = {
-            "Authorization": f"Bearer {self.config.get('api_key')}",
-            "X-Rillet-API-Version": self.api_version,
-        }
-        response = requests.post(
-            f"{self.get_base_url()}{self.endpoint}/{record_id}",
-            files=files,
-            headers=multipart_headers,
-        )
-        self.validate_response(response)
+            att_name = self.get_attachment_name(record_id, attachment, index)
+            filename, content_type = resolve_attachment_filename_and_type(
+                att_name, content, content_type
+            )
+
+            files = {"file": (filename, content, content_type)}
+            multipart_headers = {
+                "Authorization": f"Bearer {self.config.get('api_key')}",
+                "X-Rillet-API-Version": self.api_version,
+            }
+            receipts[key] = {"status": "pending", "created_at": time.time()}
+            self._write_create_journal(path, journal)
+            self._pace_request()
+            response = requests.post(
+                f"{self.get_base_url()}{self.endpoint}/{record_id}",
+                files=files,
+                headers=multipart_headers,
+                timeout=(10, 60),
+            )
+            response.raise_for_status()
+            self.validate_response(response)
+            if not 200 <= response.status_code < 300:
+                raise ValueError("Receipt upload did not return a successful HTTP status")
+            receipts[key]["status"] = "confirmed"
+            self._write_create_journal(path, journal)
 
     def process_prepaid_lines(self, lines: dict) -> list[dict]:
         """Process prepaid lines for a record."""
