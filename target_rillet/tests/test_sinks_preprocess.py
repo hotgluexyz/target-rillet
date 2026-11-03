@@ -11,6 +11,7 @@ from target_rillet.sinks import (
     ChargesSink,
     FallbackSink,
     JournalsSink,
+    ReconcileTransactionsSink,
     ReimbursementsSink,
     VendorCreditsSink,
     VendorsSink,
@@ -30,6 +31,7 @@ LOOKUP_CACHE = {
     "accounts_by_id": {
         "acc-1": "6300",
     },
+    "accounts_with_prepaid_account": set(),
     "subsidiaries": {
         "US Entity": "sub-123",
     },
@@ -341,6 +343,164 @@ class TestChargesSinkPreprocessRecord:
         assert "accountId" not in payload["items"][2]
         assert payload["items"][3]["account_code"] == "5000"
 
+    def test_pops_attachments_before_upsert(self, monkeypatch):
+        sink = make_sink(ChargesSink, "charges", lookup_cache=LOOKUP_CACHE)
+        posted = []
+
+        def fake_upsert(self, record, context):
+            assert "attachments" not in record
+            return "charge-1", True, {}
+
+        monkeypatch.setattr(RilletSink, "upsert_record", fake_upsert)
+        monkeypatch.setattr(
+            sink,
+            "post_attachment",
+            lambda record_id, attachment, index: posted.append(
+                (record_id, attachment, index)
+            ),
+        )
+
+        record_id, success, _ = sink.upsert_record(
+            {
+                "vendor_id": "vendor-1",
+                "attachments": [{"url": "https://example.com/receipt.pdf"}],
+            },
+            {},
+        )
+
+        assert record_id == "charge-1"
+        assert success is True
+        assert posted == [
+            ("charge-1", {"url": "https://example.com/receipt.pdf"}, 0)
+        ]
+
+
+class TestReconcileTransactionsSink:
+    def test_resolves_external_ids_from_target_state(self):
+        sink = make_sink(
+            ReconcileTransactionsSink, "reconcile-transactions", lookup_cache={}
+        )
+        sink._target._latest_state = {
+            "bookmarks": {
+                "bank-transactions": [
+                    {"externalId": "ext-txn", "id": "bt-uuid-1", "success": True},
+                ],
+                "charges": [
+                    {"externalId": "ext-charge", "id": "ch-uuid-1", "success": True},
+                ],
+                "reimbursements": [
+                    {"externalId": "ext-reimb", "id": "re-uuid-1", "success": True},
+                ],
+                "Bills": [
+                    {"externalId": "ext-bill", "id": "bill-uuid-1", "success": True},
+                ],
+            }
+        }
+
+        payload = sink.preprocess_record(
+            {
+                "transaction_ids": ["ext-txn"],
+                "charge_ids": ["ext-charge"],
+                "reimbursement_ids": ["ext-reimb"],
+                "bill_ids": ["ext-bill"],
+            },
+            {},
+        )
+
+        assert payload == {
+            "transaction_ids": ["bt-uuid-1"],
+            "charge_ids": ["ch-uuid-1"],
+            "reimbursement_ids": ["re-uuid-1"],
+            "bill_ids": ["bill-uuid-1"],
+        }
+
+    def test_raises_when_transaction_cannot_be_resolved(self):
+        sink = make_sink(
+            ReconcileTransactionsSink, "reconcile-transactions", lookup_cache={}
+        )
+        sink._target._latest_state = {
+            "bookmarks": {
+                "charges": [
+                    {"externalId": "navan-1", "id": "ch-uuid-1", "success": True},
+                ],
+            }
+        }
+
+        with pytest.raises(
+            ValueError,
+            match="Could not resolve bank-transactions external id 'navan-1'",
+        ):
+            sink.preprocess_record(
+                {
+                    "transaction_ids": ["navan-1"],
+                    "charge_ids": ["navan-1"],
+                },
+                {},
+            )
+
+    def test_raises_when_matched_record_cannot_be_resolved(self):
+        sink = make_sink(
+            ReconcileTransactionsSink, "reconcile-transactions", lookup_cache={}
+        )
+        sink._target._latest_state = {
+            "bookmarks": {
+                "bank-transactions": [
+                    {"externalId": "navan-1", "id": "bt-uuid-1", "success": True},
+                ],
+            }
+        }
+
+        with pytest.raises(
+            ValueError,
+            match="Could not resolve charges external id 'navan-1'",
+        ):
+            sink.preprocess_record(
+                {
+                    "transaction_ids": ["navan-1"],
+                    "charge_ids": ["navan-1"],
+                },
+                {},
+            )
+
+    def test_upsert_posts_payload_and_returns_no_id(self, monkeypatch):
+        sink = make_sink(
+            ReconcileTransactionsSink, "reconcile-transactions", lookup_cache={}
+        )
+        calls = []
+
+        def fake_request_api(http_method, endpoint=None, request_data=None, **kwargs):
+            calls.append(
+                {
+                    "http_method": http_method,
+                    "endpoint": endpoint,
+                    "request_data": request_data,
+                }
+            )
+            return None
+
+        monkeypatch.setattr(sink, "request_api", fake_request_api)
+
+        payload = {
+            "transaction_ids": ["bt-uuid-1"],
+            "reimbursement_ids": ["re-uuid-1"],
+        }
+        record_id, success, state_updates = sink.upsert_record(payload, {})
+
+        assert record_id is None
+        assert success is True
+        assert state_updates == {}
+        assert calls == [
+            {
+                "http_method": "POST",
+                "endpoint": "/bank-transactions/reconcile/transactions",
+                "request_data": payload,
+            }
+        ]
+
+    def test_get_sink_class_resolves_reconcile_stream(self):
+        target = TargetRillet(config=SAMPLE_CONFIG)
+        assert target.get_sink_class("reconcile-transactions") is ReconcileTransactionsSink
+
 
 class TestReimbursementsSinkPreprocessRecord:
     def test_inherits_fallback_subsidiary_resolution(self):
@@ -348,7 +508,7 @@ class TestReimbursementsSinkPreprocessRecord:
             ReimbursementsSink, "reimbursements", lookup_cache=LOOKUP_CACHE
         )
         payload = sink.preprocess_record(
-            {"vendor_id": "vendor-1", "subsidiaryId": "sub-99"},
+            {"vendor_id": "vendor-1", "subsidiaryId": "sub-99", "items": []},
             {},
         )
         assert payload["subsidiary_id"] == "sub-99"

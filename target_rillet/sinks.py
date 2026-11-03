@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from target_rillet.client import RilletSink
 from hotglue_singer_sdk.exceptions import FatalAPIError
 
@@ -271,7 +273,7 @@ class ChargesSink(FallbackSink):
         return record
     
     def upsert_record(self, record: dict, context: dict):
-        """Create a reimbursement in Rillet, then upload any attachments."""
+        """Create a charge in Rillet, then upload any attachments."""
         attachments = record.pop("attachments", [])
         id, success, state_updates = super().upsert_record(record, context)
 
@@ -280,9 +282,110 @@ class ChargesSink(FallbackSink):
                 for index, attachment in enumerate(attachments):
                     self.post_attachment(id, attachment, index)
         except Exception as e:
-            self.logger.info(f"Error posting attachments to reimbursement {id}: {e}")
+            self.logger.info(f"Error posting attachments to charge {id}: {e}")
 
         return id, success, state_updates
+
+
+class ReconcileTransactionsSink(FallbackSink):
+    """Match bank transactions to ledger records via Rillet cash matching.
+
+    ETL emits external IDs (not Rillet UUIDs) in ``transaction_ids`` and any
+    combination of matched-record id lists supported by
+    ``POST /bank-transactions/reconcile/transactions`` (charges, bills,
+    reimbursements, invoices, etc.). This sink resolves each id to a Rillet
+    UUID, then POSTs the match (API v4). Success is HTTP 204 — there is no
+    reconcile entity to upsert or snapshot.
+    """
+
+    name = "reconcile-transactions"
+    endpoint = "/bank-transactions/reconcile/transactions"
+    api_version = "4"
+    allows_upserts = False
+    lookup_subsidiary = False
+
+    # MatchBankTransactionsRequest id arrays → target stream / snapshot name
+    _ID_LIST_FIELDS = (
+        ("transaction_ids", "bank-transactions"),
+        ("bill_ids", "Bills"),
+        ("reimbursement_ids", "reimbursements"),
+        ("charge_ids", "charges"),
+        ("invoice_ids", "invoices"),
+        ("credit_memo_ids", "credit-memos"),
+        ("bill_payment_ids", "bill_payments"),
+        ("invoice_payment_ids", "invoice_payments"),
+        ("journal_entry_ids", "JournalEntries"),
+        ("vendor_credit_ids", "vendor-credits"),
+    )
+
+    def _remote_id_from_state(self, object_name: str, external_id: str) -> str | None:
+        """Return a Rillet id from target bookmarks for *object_name*, if present."""
+        bookmarks = (self._target._latest_state or {}).get("bookmarks", {}).get(
+            object_name
+        )
+        if not bookmarks:
+            return None
+        match = next(
+            (
+                entry
+                for entry in bookmarks
+                if entry.get("externalId") == external_id and entry.get("id")
+            ),
+            None,
+        )
+        return match.get("id") if match else None
+
+    def _remote_id_from_snapshot(self, object_name: str, external_id: str) -> str | None:
+        """Return a Rillet RemoteId from the flow snapshot for *object_name*, if present."""
+        flow_id = os.environ.get("FLOW")
+        if not flow_id or not hasattr(self._target, "read_snapshot"):
+            return None
+        snapshot = self._target.read_snapshot(f"{object_name}_{flow_id}")
+        if snapshot is None or snapshot.empty:
+            return None
+        snapshot = snapshot.copy()
+        snapshot["InputId"] = snapshot["InputId"].astype(str)
+        rows = snapshot[snapshot["InputId"] == str(external_id)]
+        if len(rows) == 0:
+            return None
+        return rows.iloc[0]["RemoteId"]
+
+    def _resolve_remote_id(self, object_name: str, external_id: str) -> str:
+        """Map an ETL external id to a Rillet UUID via state, then snapshot."""
+        if not external_id:
+            raise ValueError(
+                f"Missing external id while resolving {object_name} for reconcile"
+            )
+        external_id = str(external_id)
+        remote_id = self._remote_id_from_state(
+            object_name, external_id
+        ) or self._remote_id_from_snapshot(object_name, external_id)
+        if not remote_id:
+            raise ValueError(
+                f"Could not resolve {object_name} external id '{external_id}' "
+                "to a Rillet id (not in target state or snapshots)"
+            )
+        return remote_id
+
+    def preprocess_record(self, record: dict, context: dict) -> dict:
+        """Resolve external ids on all present match-id lists to Rillet UUIDs."""
+        record = super().preprocess_record(record, context)
+        for field, object_name in self._ID_LIST_FIELDS:
+            external_ids = record.get(field) or []
+            if not external_ids:
+                continue
+            record[field] = [
+                self._resolve_remote_id(object_name, external_id)
+                for external_id in external_ids
+            ]
+        if not record.get("transaction_ids"):
+            raise ValueError("transaction_ids is required for reconcile-transactions")
+        return record
+
+    def upsert_record(self, record: dict, context: dict):
+        """POST the match request; Rillet returns 204 with no resource id."""
+        self.request_api("POST", endpoint=self.endpoint, request_data=record)
+        return None, True, {}
 
 
 class ReimbursementsSink(FallbackSink):
