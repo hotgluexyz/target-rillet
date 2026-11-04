@@ -111,6 +111,7 @@ class BillsSink(RilletSink):
             "expense_number": record.get("billNumber"),
             "bill_date": record.get("issueDate"),
             "due_date": record.get("dueDate"),
+            "impact_date": record.get("impactDate"),
             "subsidiary_id": record.get("subsidiaryId"),
             "attachments": record.get("attachments", []),
             "description": record.get("description"),
