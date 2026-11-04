@@ -1,6 +1,8 @@
 """Unit tests for sink preprocess_record methods."""
 
+from copy import deepcopy
 from typing import Optional, Type
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -30,6 +32,8 @@ LOOKUP_CACHE = {
     "accounts_by_id": {
         "acc-1": "6300",
     },
+    # Seeded so process_prepaid_lines does not hit the live accounts API.
+    "accounts_with_prepaid_account": set(),
     "subsidiaries": {
         "US Entity": "sub-123",
     },
@@ -341,6 +345,47 @@ class TestChargesSinkPreprocessRecord:
         assert "accountId" not in payload["items"][2]
         assert payload["items"][3]["account_code"] == "5000"
 
+    def test_resolves_name_value_line_fields(self):
+        sink = make_sink(ChargesSink, "charges", lookup_cache=LOOKUP_CACHE)
+        payload = sink.preprocess_record(
+            {
+                "vendor_id": "vendor-1",
+                "subsidiaryId": "sub-1",
+                "items": [
+                    {
+                        "account_code": "60214",
+                        "amount": {"amount": "10.00", "currency": "USD"},
+                        "fields": [{"name": "Department", "value": "Engineering"}],
+                    }
+                ],
+            },
+            {},
+        )
+        assert payload["items"][0]["fields"] == [
+            {"field_id": "field-1", "field_value_id": "val-1"},
+        ]
+
+    def test_leaves_airbase_style_line_fields_unchanged(self):
+        sink = make_sink(ChargesSink, "charges", lookup_cache=LOOKUP_CACHE)
+        airbase_fields = [
+            {"field_id": "field-1", "field_value_id": "val-1"},
+        ]
+        payload = sink.preprocess_record(
+            {
+                "vendor_id": "vendor-1",
+                "subsidiaryId": "sub-1",
+                "items": [
+                    {
+                        "account_code": "60214",
+                        "amount": {"amount": "10.00", "currency": "USD"},
+                        "fields": airbase_fields,
+                    }
+                ],
+            },
+            {},
+        )
+        assert payload["items"][0]["fields"] == airbase_fields
+
 
 class TestReimbursementsSinkPreprocessRecord:
     def test_inherits_fallback_subsidiary_resolution(self):
@@ -348,10 +393,32 @@ class TestReimbursementsSinkPreprocessRecord:
             ReimbursementsSink, "reimbursements", lookup_cache=LOOKUP_CACHE
         )
         payload = sink.preprocess_record(
-            {"vendor_id": "vendor-1", "subsidiaryId": "sub-99"},
+            {"vendor_id": "vendor-1", "subsidiaryId": "sub-99", "items": []},
             {},
         )
         assert payload["subsidiary_id"] == "sub-99"
+
+    def test_resolves_name_value_line_fields(self):
+        sink = make_sink(
+            ReimbursementsSink, "reimbursements", lookup_cache=LOOKUP_CACHE
+        )
+        payload = sink.preprocess_record(
+            {
+                "vendor_id": "vendor-1",
+                "subsidiaryId": "sub-1",
+                "items": [
+                    {
+                        "account_code": "60214",
+                        "amount": {"amount": "10.00", "currency": "USD"},
+                        "fields": [{"name": "Department", "value": "Sales"}],
+                    }
+                ],
+            },
+            {},
+        )
+        assert payload["items"][0]["fields"] == [
+            {"field_id": "field-1", "field_value_id": "val-2"},
+        ]
 
 
 class TestVendorCreditsSinkPreprocessRecord:
@@ -382,6 +449,68 @@ class TestVendorsSinkPreprocessRecord:
         )
         assert "id" not in payload
         assert payload["name"] == "New Vendor Inc"
+
+
+class TestResolveCustomFields:
+    def test_creates_missing_value_and_updates_cache(self):
+        cache = deepcopy(LOOKUP_CACHE)
+        sink = make_sink(ChargesSink, "charges", lookup_cache=cache)
+        created_value = {"id": "val-new", "name": "Navan-Dept-X"}
+        sink.request_api = MagicMock(
+            return_value=MagicMock(
+                json=MagicMock(
+                    return_value={
+                        "id": "field-1",
+                        "name": "Department",
+                        "values": [
+                            {"id": "val-1", "name": "Engineering"},
+                            {"id": "val-2", "name": "Sales"},
+                            created_value,
+                        ],
+                    }
+                )
+            )
+        )
+
+        resolved = sink._resolve_custom_fields(
+            [{"name": "Department", "value": "Navan-Dept-X"}]
+        )
+
+        assert resolved == [{"field_id": "field-1", "field_value_id": "val-new"}]
+        sink.request_api.assert_called_once_with(
+            "POST",
+            endpoint="/fields/field-1/values",
+            request_data={"name": "Navan-Dept-X"},
+        )
+        assert created_value in sink._lookup_cache["fields"]["Department"]["values"]
+        # Second resolve hits the updated cache (no extra create).
+        sink.request_api.reset_mock()
+        assert sink._resolve_custom_fields(
+            [{"name": "Department", "value": "Navan-Dept-X"}]
+        ) == [{"field_id": "field-1", "field_value_id": "val-new"}]
+        sink.request_api.assert_not_called()
+
+    def test_skips_missing_field_definition(self, caplog):
+        sink = make_sink(ChargesSink, "charges", lookup_cache=deepcopy(LOOKUP_CACHE))
+        sink.request_api = MagicMock()
+
+        with caplog.at_level("WARNING"):
+            resolved = sink._resolve_custom_fields(
+                [{"name": "Unknown Field", "value": "Anything"}]
+            )
+
+        assert resolved == []
+        sink.request_api.assert_not_called()
+        assert "Field name Unknown Field not found" in caplog.text
+
+    def test_passthrough_already_resolved_ids(self):
+        sink = make_sink(ChargesSink, "charges", lookup_cache=deepcopy(LOOKUP_CACHE))
+        sink.request_api = MagicMock()
+        resolved = sink._resolve_custom_fields(
+            [{"field_id": "field-1", "field_value_id": "val-1"}]
+        )
+        assert resolved == [{"field_id": "field-1", "field_value_id": "val-1"}]
+        sink.request_api.assert_not_called()
 
 
 class TestUpdateLookupCacheObjectList:
