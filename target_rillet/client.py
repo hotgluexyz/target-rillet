@@ -251,10 +251,41 @@ class RilletSink(HotglueSink):
             }
             return tax_rate    
 
+    def _create_field_value(self, field: dict, field_name: str, value_name: str) -> dict | None:
+        """
+        Create a new value for a custom field and update the cache.
+        """
+        response = self.request_api(
+            "POST",
+            endpoint=f"/fields/{field['id']}/values",
+            request_data={"name": value_name},
+        )
+        updated_field = response.json()
+        self.update_lookup_cache("fields", field_name, updated_field)
+        return next(
+            (value for value in updated_field.get("values", []) if value["name"] == value_name),
+            None,
+        )
+
     def _resolve_custom_fields(self, custom_fields: list[dict]) -> list[dict]:
-        """Resolve custom field names and values to their corresponding Rillet IDs via cache lookups."""
+        """Resolve {name, value} custom field entries to {field_id, field_value_id}.
+
+        Entries that already have this structure are passed through unchanged.
+        When create_missing_field_values is true, missing values are created
+        and written back into the cache. Otherwise they are skipped. Missing
+        field definitions are always skipped — tenants must define the field in
+        Rillet first.
+        """
+        create_missing = self.config.get("create_missing_field_values", False)
         fields = []
         for custom_field in custom_fields:
+            if custom_field.get("field_id") and custom_field.get("field_value_id"):
+                fields.append({
+                    "field_id": custom_field["field_id"],
+                    "field_value_id": custom_field["field_value_id"],
+                })
+                continue
+
             if not custom_field.get("name") or not custom_field.get("value"):
                 self.logger.warning(f"Custom field {custom_field} is missing name or value. Skipping...")
                 continue
@@ -264,10 +295,30 @@ class RilletSink(HotglueSink):
                 self.logger.warning(f"Field name {custom_field['name']} not found in Rillet. Skipping...")
                 continue
 
-            field_value = next((value for value in field["values"] if value["name"] == custom_field["value"]), None)
+            field_value = next(
+                (value for value in field["values"] if value["name"] == custom_field["value"]),
+                None,
+            )
             if not field_value:
-                self.logger.warning(f"Field value {custom_field['value']} for field {custom_field['name']} not found in Rillet. Skipping...")
-                continue
+                if not create_missing:
+                    self.logger.warning(
+                        f"Field value {custom_field['value']} for field "
+                        f"{custom_field['name']} not found in Rillet. Skipping..."
+                    )
+                    continue
+                self.logger.info(
+                    f"Field value {custom_field['value']!r} for field {custom_field['name']!r} "
+                    "not found in Rillet; creating it."
+                )
+                field_value = self._create_field_value(
+                    field, custom_field["name"], custom_field["value"]
+                )
+                if not field_value:
+                    self.logger.warning(
+                        f"Failed to create field value {custom_field['value']!r} "
+                        f"for field {custom_field['name']!r}. Skipping..."
+                    )
+                    continue
 
             fields.append({
                 "field_id": field["id"],

@@ -259,20 +259,21 @@ class ChargesSink(FallbackSink):
     ]
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
+        """Resolve line level accounts and custom fields to Rillet IDs."""
         record = super().preprocess_record(record, context)
-        # resolve lines accounts
         for item in record.get("items", []):
             if not item.get("account_code"):
                 item["account_code"] = self._resolve_account(item)
-            # clean payload if needed
             item.pop("accountNumber", None)
             item.pop("accountName", None)
             item.pop("accountId", None)
+            if item.get("fields"):
+                item["fields"] = self._resolve_custom_fields(item["fields"])
         record["items"] = self.process_prepaid_lines(record.get("items"))
         return record
-    
+
     def upsert_record(self, record: dict, context: dict):
-        """Create a reimbursement in Rillet, then upload any attachments."""
+        """Create a charge in Rillet, then upload any attachments."""
         attachments = record.pop("attachments", [])
         id, success, state_updates = super().upsert_record(record, context)
 
@@ -281,7 +282,7 @@ class ChargesSink(FallbackSink):
                 for index, attachment in enumerate(attachments):
                     self.post_attachment(id, attachment, index)
         except Exception as e:
-            self.logger.info(f"Error posting attachments to reimbursement {id}: {e}")
+            self.logger.info(f"Error posting attachments to charge {id}: {e}")
 
         return id, success, state_updates
 
@@ -299,6 +300,14 @@ class ReimbursementsSink(FallbackSink):
             "objectName": "vendors",
         },
     ]
+
+    def preprocess_record(self, record: dict, context: dict) -> dict:
+        """Resolve line custom fields to Rillet IDs."""
+        record = super().preprocess_record(record, context)
+        for item in record.get("items", []):
+            if item.get("fields"):
+                item["fields"] = self._resolve_custom_fields(item["fields"])
+        return record
 
     def upsert_record(self, record: dict, context: dict):
         """Create a reimbursement in Rillet, then upload any attachments."""
