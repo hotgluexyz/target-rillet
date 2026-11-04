@@ -376,7 +376,7 @@ class TestChargesSinkPreprocessRecord:
 
 
 class TestReconcileTransactionsSink:
-    def test_resolves_external_ids_from_target_state(self):
+    def test_relation_fields_resolve_id_lists_from_target_state(self):
         sink = make_sink(
             ReconcileTransactionsSink, "reconcile-transactions", lookup_cache={}
         )
@@ -397,14 +397,15 @@ class TestReconcileTransactionsSink:
             }
         }
 
-        payload = sink.preprocess_record(
+        payload = sink._target.get_record_id(
+            sink.name,
             {
                 "transaction_ids": ["ext-txn"],
                 "charge_ids": ["ext-charge"],
                 "reimbursement_ids": ["ext-reimb"],
                 "bill_ids": ["ext-bill"],
             },
-            {},
+            sink.relation_fields,
         )
 
         assert payload == {
@@ -414,7 +415,7 @@ class TestReconcileTransactionsSink:
             "bill_ids": ["bill-uuid-1"],
         }
 
-    def test_raises_when_transaction_cannot_be_resolved(self):
+    def test_relation_fields_leave_unresolved_external_ids(self):
         sink = make_sink(
             ReconcileTransactionsSink, "reconcile-transactions", lookup_cache={}
         )
@@ -426,41 +427,17 @@ class TestReconcileTransactionsSink:
             }
         }
 
-        with pytest.raises(
-            ValueError,
-            match="Could not resolve bank-transactions external id 'navan-1'",
-        ):
-            sink.preprocess_record(
-                {
-                    "transaction_ids": ["navan-1"],
-                    "charge_ids": ["navan-1"],
-                },
-                {},
-            )
-
-    def test_raises_when_matched_record_cannot_be_resolved(self):
-        sink = make_sink(
-            ReconcileTransactionsSink, "reconcile-transactions", lookup_cache={}
+        payload = sink._target.get_record_id(
+            sink.name,
+            {
+                "transaction_ids": ["navan-1"],
+                "charge_ids": ["navan-1"],
+            },
+            sink.relation_fields,
         )
-        sink._target._latest_state = {
-            "bookmarks": {
-                "bank-transactions": [
-                    {"externalId": "navan-1", "id": "bt-uuid-1", "success": True},
-                ],
-            }
-        }
 
-        with pytest.raises(
-            ValueError,
-            match="Could not resolve charges external id 'navan-1'",
-        ):
-            sink.preprocess_record(
-                {
-                    "transaction_ids": ["navan-1"],
-                    "charge_ids": ["navan-1"],
-                },
-                {},
-            )
+        assert payload["transaction_ids"] == ["navan-1"]
+        assert payload["charge_ids"] == ["ch-uuid-1"]
 
     def test_upsert_posts_payload_and_returns_no_id(self, monkeypatch):
         sink = make_sink(
