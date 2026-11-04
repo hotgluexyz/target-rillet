@@ -270,11 +270,13 @@ class RilletSink(HotglueSink):
     def _resolve_custom_fields(self, custom_fields: list[dict]) -> list[dict]:
         """Resolve {name, value} custom field entries to {field_id, field_value_id}.
 
-        Entries that already have have this structure are passed through unchanged.
-        Missing values are created and written back into the cache. 
-        Missing field definitions are skipped — tenants must define the
-        field in Rillet first.
+        Entries that already have this structure are passed through unchanged.
+        When create_missing_field_values is true, missing values are created
+        and written back into the cache. Otherwise they are skipped. Missing
+        field definitions are always skipped — tenants must define the field in
+        Rillet first.
         """
+        create_missing = self.config.get("create_missing_field_values", False)
         fields = []
         for custom_field in custom_fields:
             if custom_field.get("field_id") and custom_field.get("field_value_id"):
@@ -298,6 +300,12 @@ class RilletSink(HotglueSink):
                 None,
             )
             if not field_value:
+                if not create_missing:
+                    self.logger.warning(
+                        f"Field value {custom_field['value']} for field "
+                        f"{custom_field['name']} not found in Rillet. Skipping..."
+                    )
+                    continue
                 self.logger.info(
                     f"Field value {custom_field['value']!r} for field {custom_field['name']!r} "
                     "not found in Rillet; creating it."

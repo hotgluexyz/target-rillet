@@ -454,7 +454,12 @@ class TestVendorsSinkPreprocessRecord:
 class TestResolveCustomFields:
     def test_creates_missing_value_and_updates_cache(self):
         cache = deepcopy(LOOKUP_CACHE)
-        sink = make_sink(ChargesSink, "charges", lookup_cache=cache)
+        sink = make_sink(
+            ChargesSink,
+            "charges",
+            config={**SAMPLE_CONFIG, "create_missing_field_values": True},
+            lookup_cache=cache,
+        )
         created_value = {"id": "val-new", "name": "Navan-Dept-X"}
         sink.request_api = MagicMock(
             return_value=MagicMock(
@@ -489,6 +494,19 @@ class TestResolveCustomFields:
             [{"name": "Department", "value": "Navan-Dept-X"}]
         ) == [{"field_id": "field-1", "field_value_id": "val-new"}]
         sink.request_api.assert_not_called()
+
+    def test_skips_missing_value_when_flag_disabled(self, caplog):
+        sink = make_sink(ChargesSink, "charges", lookup_cache=deepcopy(LOOKUP_CACHE))
+        sink.request_api = MagicMock()
+
+        with caplog.at_level("WARNING"):
+            resolved = sink._resolve_custom_fields(
+                [{"name": "Department", "value": "Navan-Dept-X"}]
+            )
+
+        assert resolved == []
+        sink.request_api.assert_not_called()
+        assert "Field value Navan-Dept-X for field Department not found" in caplog.text
 
     def test_skips_missing_field_definition(self, caplog):
         sink = make_sink(ChargesSink, "charges", lookup_cache=deepcopy(LOOKUP_CACHE))
