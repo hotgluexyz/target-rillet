@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from target_rillet.client import RilletSink
+import requests
 from hotglue_singer_sdk.exceptions import FatalAPIError
+
+from target_rillet.client import RilletSink
 
 
 class JournalsSink(RilletSink):
@@ -325,8 +327,25 @@ class ReconcileTransactionsSink(FallbackSink):
     ]
 
     def upsert_record(self, record: dict, context: dict):
-        """POST the match request; Rillet returns 204 with no resource id."""
-        self.request_api("POST", endpoint=self.endpoint, request_data=record)
+        """POST the match request. 
+           Successes return HTTP 204.
+
+        Rematches of already-settled entries return 400 EntriesAlreadySettled
+        and are logged then skipped.
+        """
+        response = requests.request(
+            method="POST",
+            url=f"{self.get_base_url()}{self.endpoint}",
+            json=record,
+            headers=self.auth_headers,
+        )
+        if response.status_code == 400 and "EntriesAlreadySettled" in response.text:
+            self.logger.info(
+                "Skipping reconcile - entries already settled: %s",
+                response.text,
+            )
+            return None, True, {"existing": True}
+        self.validate_response(response)
         return None, True, {}
 
 
