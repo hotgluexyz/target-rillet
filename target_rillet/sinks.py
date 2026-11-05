@@ -296,11 +296,13 @@ class ReconcileTransactionsSink(FallbackSink):
     id lists (charges, bills, reimbursements, etc.). SDK relation_fields
     resolves each id from same-job target state or flow snapshots.
 
-    Records sent through the sink will be automatically matched and reconciled 
-    in Rillet.
+    ETL sends synthetic id and externalId fields
+    so successful matches are written to the target snapshot for debugging
 
     Example payload:
         {
+        "id": "navan-txn-1",
+        "externalId": "navan-txn-1",
         "transaction_ids": ["17509021-a931-4e66-9161-f77308bd501d"],
         "charge_ids": ["17509021-a931-4e66-9161-f77308bd501d"]
         }
@@ -327,12 +329,18 @@ class ReconcileTransactionsSink(FallbackSink):
     ]
 
     def upsert_record(self, record: dict, context: dict):
-        """POST the match request. 
+        """POST the match request.
            Successes return HTTP 204.
 
         Rematches of already-settled entries return 400 EntriesAlreadySettled
         and are logged then skipped.
+
+        Returns the synthetic record id (provided by ETL) so the
+        target can snapshot the successful match under that externalId.
         """
+        # Synthetic snapshot key only — not part of the Rillet match body.
+        record_id = record.pop("id", None)
+
         response = requests.request(
             method="POST",
             url=f"{self.get_base_url()}{self.endpoint}",
@@ -344,9 +352,9 @@ class ReconcileTransactionsSink(FallbackSink):
                 "Skipping reconcile - entries already settled: %s",
                 response.text,
             )
-            return None, True, {"existing": True}
+            return record_id, True, {"existing": True}
         self.validate_response(response)
-        return None, True, {}
+        return record_id, True, {}
 
 
 class ReimbursementsSink(FallbackSink):

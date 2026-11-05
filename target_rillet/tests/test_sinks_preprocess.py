@@ -470,7 +470,7 @@ class TestReconcileTransactionsSink:
         assert payload["transaction_ids"] == ["navan-1"]
         assert payload["charge_ids"] == ["ch-uuid-1"]
 
-    def test_upsert_posts_payload_and_returns_no_id(self, monkeypatch):
+    def test_upsert_posts_payload_and_returns_synthetic_id(self, monkeypatch):
         sink = make_sink(
             ReconcileTransactionsSink, "reconcile-transactions", lookup_cache={}
         )
@@ -496,19 +496,23 @@ class TestReconcileTransactionsSink:
         monkeypatch.setattr(sink, "validate_response", lambda response: None)
 
         payload = {
+            "id": "navan-txn-1",
             "transaction_ids": ["bt-uuid-1"],
             "reimbursement_ids": ["re-uuid-1"],
         }
         record_id, success, state_updates = sink.upsert_record(payload, {})
 
-        assert record_id is None
+        assert record_id == "navan-txn-1"
         assert success is True
         assert state_updates == {}
         assert calls == [
             {
                 "method": "POST",
                 "url": f"{sink.get_base_url()}/bank-transactions/reconcile/transactions",
-                "json": payload,
+                "json": {
+                    "transaction_ids": ["bt-uuid-1"],
+                    "reimbursement_ids": ["re-uuid-1"],
+                },
             }
         ]
 
@@ -533,13 +537,14 @@ class TestReconcileTransactionsSink:
 
         record_id, success, state_updates = sink.upsert_record(
             {
+                "id": "navan-txn-1",
                 "transaction_ids": ["bt-1"],
                 "charge_ids": ["ch-1"],
             },
             {},
         )
 
-        assert record_id is None
+        assert record_id == "navan-txn-1"
         assert success is True
         assert state_updates == {"existing": True}
 
