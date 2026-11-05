@@ -44,6 +44,15 @@ class TargetRillet(TargetHotglue):
             description="The Rillet API version to use",
             default="2",
         ),
+        th.Property(
+            "create_missing_field_values",
+            th.BooleanType,
+            description=(
+                "When true, create missing custom field values in Rillet during "
+                "resolve. When false (default), skip unresolved values."
+            ),
+            default=False,
+        ),
     ).to_dict()
 
     SINK_TYPES = [

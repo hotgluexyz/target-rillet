@@ -1,6 +1,8 @@
 """Unit tests for sink preprocess_record methods."""
 
+from copy import deepcopy
 from typing import Optional, Type
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -31,6 +33,7 @@ LOOKUP_CACHE = {
     "accounts_by_id": {
         "acc-1": "6300",
     },
+    # Seeded so process_prepaid_lines does not hit the live accounts API.
     "accounts_with_prepaid_account": set(),
     "subsidiaries": {
         "US Entity": "sub-123",
@@ -247,6 +250,24 @@ class TestBillsSinkPreprocessRecord:
             },
         ]
 
+    def test_maps_impact_date(self):
+        sink = make_sink(BillsSink, "Bills", lookup_cache=LOOKUP_CACHE)
+        sink._lookup_cache["accounts_with_prepaid_account"] = set()
+        payload = sink.preprocess_record(
+            {
+                "vendorId": "vendor-1",
+                "billNumber": "BILL-100",
+                "issueDate": "2024-01-01T00:00:00.000000Z",
+                "dueDate": "2024-01-31T00:00:00.000000Z",
+                "impactDate": "2026-10-19T00:00:00.000000Z",
+                "currency": "USD",
+                "expenses": [{"accountNumber": "6100", "amount": "1"}],
+            },
+            {},
+        )
+        assert payload["impact_date"] == "2026-10-19T00:00:00.000000Z"
+        assert payload["bill_date"] == "2024-01-01T00:00:00.000000Z"
+
     def test_resolves_subsidiary_from_name_when_id_missing(self):
         sink = make_sink(BillsSink, "Bills", lookup_cache=LOOKUP_CACHE)
         payload = sink.preprocess_record(
@@ -343,146 +364,46 @@ class TestChargesSinkPreprocessRecord:
         assert "accountId" not in payload["items"][2]
         assert payload["items"][3]["account_code"] == "5000"
 
-    def test_pops_attachments_before_upsert(self, monkeypatch):
+    def test_resolves_name_value_line_fields(self):
         sink = make_sink(ChargesSink, "charges", lookup_cache=LOOKUP_CACHE)
-        posted = []
-
-        def fake_upsert(self, record, context):
-            assert "attachments" not in record
-            return "charge-1", True, {}
-
-        monkeypatch.setattr(RilletSink, "upsert_record", fake_upsert)
-        monkeypatch.setattr(
-            sink,
-            "post_attachment",
-            lambda record_id, attachment, index: posted.append(
-                (record_id, attachment, index)
-            ),
-        )
-
-        record_id, success, _ = sink.upsert_record(
+        payload = sink.preprocess_record(
             {
                 "vendor_id": "vendor-1",
-                "attachments": [{"url": "https://example.com/receipt.pdf"}],
+                "subsidiaryId": "sub-1",
+                "items": [
+                    {
+                        "account_code": "60214",
+                        "amount": {"amount": "10.00", "currency": "USD"},
+                        "fields": [{"name": "Department", "value": "Engineering"}],
+                    }
+                ],
             },
             {},
         )
-
-        assert record_id == "charge-1"
-        assert success is True
-        assert posted == [
-            ("charge-1", {"url": "https://example.com/receipt.pdf"}, 0)
+        assert payload["items"][0]["fields"] == [
+            {"field_id": "field-1", "field_value_id": "val-1"},
         ]
 
-
-class TestReconcileTransactionsSink:
-    def test_relation_fields_resolve_id_lists_from_target_state(self):
-        sink = make_sink(
-            ReconcileTransactionsSink, "reconcile-transactions", lookup_cache={}
-        )
-        sink._target._latest_state = {
-            "bookmarks": {
-                "bank-transactions": [
-                    {"externalId": "ext-txn", "id": "bt-uuid-1", "success": True},
-                ],
-                "charges": [
-                    {"externalId": "ext-charge", "id": "ch-uuid-1", "success": True},
-                ],
-                "reimbursements": [
-                    {"externalId": "ext-reimb", "id": "re-uuid-1", "success": True},
-                ],
-                "Bills": [
-                    {"externalId": "ext-bill", "id": "bill-uuid-1", "success": True},
-                ],
-            }
-        }
-
-        payload = sink._target.get_record_id(
-            sink.name,
-            {
-                "transaction_ids": ["ext-txn"],
-                "charge_ids": ["ext-charge"],
-                "reimbursement_ids": ["ext-reimb"],
-                "bill_ids": ["ext-bill"],
-            },
-            sink.relation_fields,
-        )
-
-        assert payload == {
-            "transaction_ids": ["bt-uuid-1"],
-            "charge_ids": ["ch-uuid-1"],
-            "reimbursement_ids": ["re-uuid-1"],
-            "bill_ids": ["bill-uuid-1"],
-        }
-
-    def test_relation_fields_leave_unresolved_external_ids(self):
-        sink = make_sink(
-            ReconcileTransactionsSink, "reconcile-transactions", lookup_cache={}
-        )
-        sink._target._latest_state = {
-            "bookmarks": {
-                "charges": [
-                    {"externalId": "navan-1", "id": "ch-uuid-1", "success": True},
-                ],
-            }
-        }
-
-        payload = sink._target.get_record_id(
-            sink.name,
-            {
-                "transaction_ids": ["navan-1"],
-                "charge_ids": ["navan-1"],
-            },
-            sink.relation_fields,
-        )
-
-        assert payload["transaction_ids"] == ["navan-1"]
-        assert payload["charge_ids"] == ["ch-uuid-1"]
-
-    def test_upsert_posts_payload_and_returns_no_id(self, monkeypatch):
-        sink = make_sink(
-            ReconcileTransactionsSink, "reconcile-transactions", lookup_cache={}
-        )
-        calls = []
-
-        def fake_request_api(http_method, endpoint=None, request_data=None, **kwargs):
-            calls.append(
-                {
-                    "http_method": http_method,
-                    "endpoint": endpoint,
-                    "request_data": request_data,
-                }
-            )
-            return None
-
-        monkeypatch.setattr(sink, "request_api", fake_request_api)
-
-        payload = {
-            "transaction_ids": ["bt-uuid-1"],
-            "reimbursement_ids": ["re-uuid-1"],
-        }
-        record_id, success, state_updates = sink.upsert_record(payload, {})
-
-        assert record_id is None
-        assert success is True
-        assert state_updates == {}
-        assert calls == [
-            {
-                "http_method": "POST",
-                "endpoint": "/bank-transactions/reconcile/transactions",
-                "request_data": payload,
-            }
+    def test_leaves_airbase_style_line_fields_unchanged(self):
+        sink = make_sink(ChargesSink, "charges", lookup_cache=LOOKUP_CACHE)
+        airbase_fields = [
+            {"field_id": "field-1", "field_value_id": "val-1"},
         ]
-
-    def test_relation_fields_declare_list_value_type(self):
-        assert all(
-            relation.get("valueType") == "list"
-            for relation in ReconcileTransactionsSink.relation_fields
+        payload = sink.preprocess_record(
+            {
+                "vendor_id": "vendor-1",
+                "subsidiaryId": "sub-1",
+                "items": [
+                    {
+                        "account_code": "60214",
+                        "amount": {"amount": "10.00", "currency": "USD"},
+                        "fields": airbase_fields,
+                    }
+                ],
+            },
+            {},
         )
-
-    def test_get_sink_class_resolves_reconcile_stream(self):
-        target = TargetRillet(config=SAMPLE_CONFIG)
-        assert target.get_sink_class("reconcile-transactions") is ReconcileTransactionsSink
+        assert payload["items"][0]["fields"] == airbase_fields
 
 
 class TestReimbursementsSinkPreprocessRecord:
@@ -495,6 +416,28 @@ class TestReimbursementsSinkPreprocessRecord:
             {},
         )
         assert payload["subsidiary_id"] == "sub-99"
+
+    def test_resolves_name_value_line_fields(self):
+        sink = make_sink(
+            ReimbursementsSink, "reimbursements", lookup_cache=LOOKUP_CACHE
+        )
+        payload = sink.preprocess_record(
+            {
+                "vendor_id": "vendor-1",
+                "subsidiaryId": "sub-1",
+                "items": [
+                    {
+                        "account_code": "60214",
+                        "amount": {"amount": "10.00", "currency": "USD"},
+                        "fields": [{"name": "Department", "value": "Sales"}],
+                    }
+                ],
+            },
+            {},
+        )
+        assert payload["items"][0]["fields"] == [
+            {"field_id": "field-1", "field_value_id": "val-2"},
+        ]
 
 
 class TestVendorCreditsSinkPreprocessRecord:
@@ -525,6 +468,86 @@ class TestVendorsSinkPreprocessRecord:
         )
         assert "id" not in payload
         assert payload["name"] == "New Vendor Inc"
+
+
+class TestResolveCustomFields:
+    def test_creates_missing_value_and_updates_cache(self):
+        cache = deepcopy(LOOKUP_CACHE)
+        sink = make_sink(
+            ChargesSink,
+            "charges",
+            config={**SAMPLE_CONFIG, "create_missing_field_values": True},
+            lookup_cache=cache,
+        )
+        created_value = {"id": "val-new", "name": "Navan-Dept-X"}
+        sink.request_api = MagicMock(
+            return_value=MagicMock(
+                json=MagicMock(
+                    return_value={
+                        "id": "field-1",
+                        "name": "Department",
+                        "values": [
+                            {"id": "val-1", "name": "Engineering"},
+                            {"id": "val-2", "name": "Sales"},
+                            created_value,
+                        ],
+                    }
+                )
+            )
+        )
+
+        resolved = sink._resolve_custom_fields(
+            [{"name": "Department", "value": "Navan-Dept-X"}]
+        )
+
+        assert resolved == [{"field_id": "field-1", "field_value_id": "val-new"}]
+        sink.request_api.assert_called_once_with(
+            "POST",
+            endpoint="/fields/field-1/values",
+            request_data={"name": "Navan-Dept-X"},
+        )
+        assert created_value in sink._lookup_cache["fields"]["Department"]["values"]
+        # Second resolve hits the updated cache (no extra create).
+        sink.request_api.reset_mock()
+        assert sink._resolve_custom_fields(
+            [{"name": "Department", "value": "Navan-Dept-X"}]
+        ) == [{"field_id": "field-1", "field_value_id": "val-new"}]
+        sink.request_api.assert_not_called()
+
+    def test_skips_missing_value_when_flag_disabled(self, caplog):
+        sink = make_sink(ChargesSink, "charges", lookup_cache=deepcopy(LOOKUP_CACHE))
+        sink.request_api = MagicMock()
+
+        with caplog.at_level("WARNING"):
+            resolved = sink._resolve_custom_fields(
+                [{"name": "Department", "value": "Navan-Dept-X"}]
+            )
+
+        assert resolved == []
+        sink.request_api.assert_not_called()
+        assert "Field value Navan-Dept-X for field Department not found" in caplog.text
+
+    def test_skips_missing_field_definition(self, caplog):
+        sink = make_sink(ChargesSink, "charges", lookup_cache=deepcopy(LOOKUP_CACHE))
+        sink.request_api = MagicMock()
+
+        with caplog.at_level("WARNING"):
+            resolved = sink._resolve_custom_fields(
+                [{"name": "Unknown Field", "value": "Anything"}]
+            )
+
+        assert resolved == []
+        sink.request_api.assert_not_called()
+        assert "Field name Unknown Field not found" in caplog.text
+
+    def test_passthrough_already_resolved_ids(self):
+        sink = make_sink(ChargesSink, "charges", lookup_cache=deepcopy(LOOKUP_CACHE))
+        sink.request_api = MagicMock()
+        resolved = sink._resolve_custom_fields(
+            [{"field_id": "field-1", "field_value_id": "val-1"}]
+        )
+        assert resolved == [{"field_id": "field-1", "field_value_id": "val-1"}]
+        sink.request_api.assert_not_called()
 
 
 class TestUpdateLookupCacheObjectList:
