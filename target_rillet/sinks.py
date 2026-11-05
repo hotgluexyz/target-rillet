@@ -308,6 +308,7 @@ class ReconcileTransactionsSink(FallbackSink):
     allows_upserts = False
     lookup_subsidiary = False
 
+    # All supported objects https://docs.api.rillet.com/reference/match-bank-transactions-to-records
     relation_fields = [
         {"field": "transaction_ids", "objectName": "bank-transactions", "valueType": "list"},
         {"field": "bill_ids", "objectName": "Bills", "valueType": "list"},
