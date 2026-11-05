@@ -13,6 +13,7 @@ from target_rillet.sinks import (
     ChargesSink,
     FallbackSink,
     JournalsSink,
+    ReconcileTransactionsSink,
     ReimbursementsSink,
     VendorCreditsSink,
     VendorsSink,
@@ -403,6 +404,159 @@ class TestChargesSinkPreprocessRecord:
             {},
         )
         assert payload["items"][0]["fields"] == airbase_fields
+
+
+class TestReconcileTransactionsSink:
+    def test_relation_fields_resolve_id_lists_from_target_state(self):
+        sink = make_sink(
+            ReconcileTransactionsSink, "reconcile-transactions", lookup_cache={}
+        )
+        sink._target._latest_state = {
+            "bookmarks": {
+                "bank-transactions": [
+                    {"externalId": "ext-txn", "id": "bt-uuid-1", "success": True},
+                ],
+                "charges": [
+                    {"externalId": "ext-charge", "id": "ch-uuid-1", "success": True},
+                ],
+                "reimbursements": [
+                    {"externalId": "ext-reimb", "id": "re-uuid-1", "success": True},
+                ],
+                "Bills": [
+                    {"externalId": "ext-bill", "id": "bill-uuid-1", "success": True},
+                ],
+            }
+        }
+
+        payload = sink._target.get_record_id(
+            sink.name,
+            {
+                "transaction_ids": ["ext-txn"],
+                "charge_ids": ["ext-charge"],
+                "reimbursement_ids": ["ext-reimb"],
+                "bill_ids": ["ext-bill"],
+            },
+            sink.relation_fields,
+        )
+
+        assert payload == {
+            "transaction_ids": ["bt-uuid-1"],
+            "charge_ids": ["ch-uuid-1"],
+            "reimbursement_ids": ["re-uuid-1"],
+            "bill_ids": ["bill-uuid-1"],
+        }
+
+    def test_relation_fields_leave_unresolved_external_ids(self):
+        sink = make_sink(
+            ReconcileTransactionsSink, "reconcile-transactions", lookup_cache={}
+        )
+        sink._target._latest_state = {
+            "bookmarks": {
+                "charges": [
+                    {"externalId": "navan-1", "id": "ch-uuid-1", "success": True},
+                ],
+            }
+        }
+
+        payload = sink._target.get_record_id(
+            sink.name,
+            {
+                "transaction_ids": ["navan-1"],
+                "charge_ids": ["navan-1"],
+            },
+            sink.relation_fields,
+        )
+
+        assert payload["transaction_ids"] == ["navan-1"]
+        assert payload["charge_ids"] == ["ch-uuid-1"]
+
+    def test_upsert_posts_payload_and_returns_synthetic_id(self, monkeypatch):
+        sink = make_sink(
+            ReconcileTransactionsSink, "reconcile-transactions", lookup_cache={}
+        )
+        calls = []
+
+        class FakeResponse:
+            status_code = 204
+            text = ""
+
+        def fake_request(method, url, json=None, headers=None, **kwargs):
+            calls.append(
+                {
+                    "method": method,
+                    "url": url,
+                    "json": json,
+                }
+            )
+            return FakeResponse()
+
+        monkeypatch.setattr(
+            "target_rillet.sinks.requests.request", fake_request
+        )
+        monkeypatch.setattr(sink, "validate_response", lambda response: None)
+
+        payload = {
+            "id": "navan-txn-1",
+            "transaction_ids": ["bt-uuid-1"],
+            "reimbursement_ids": ["re-uuid-1"],
+        }
+        record_id, success, state_updates = sink.upsert_record(payload, {})
+
+        assert record_id == "navan-txn-1"
+        assert success is True
+        assert state_updates == {}
+        assert calls == [
+            {
+                "method": "POST",
+                "url": f"{sink.get_base_url()}/bank-transactions/reconcile/transactions",
+                "json": {
+                    "transaction_ids": ["bt-uuid-1"],
+                    "reimbursement_ids": ["re-uuid-1"],
+                },
+            }
+        ]
+
+    def test_upsert_skips_entries_already_settled(self, monkeypatch):
+        sink = make_sink(
+            ReconcileTransactionsSink, "reconcile-transactions", lookup_cache={}
+        )
+
+        class FakeResponse:
+            status_code = 400
+            text = (
+                '{"type":"https://rillet.com/exception/entries_already_settled",'
+                '"title":"EntriesAlreadySettled","status":400,'
+                '"detail":"Match operation not allowed. All entries are already '
+                'fully paid or reconciled and have no amount due: [ch-1]."}'
+            )
+
+        monkeypatch.setattr(
+            "target_rillet.sinks.requests.request",
+            lambda *args, **kwargs: FakeResponse(),
+        )
+
+        record_id, success, state_updates = sink.upsert_record(
+            {
+                "id": "navan-txn-1",
+                "transaction_ids": ["bt-1"],
+                "charge_ids": ["ch-1"],
+            },
+            {},
+        )
+
+        assert record_id == "navan-txn-1"
+        assert success is True
+        assert state_updates == {"existing": True}
+
+    def test_relation_fields_declare_list_value_type(self):
+        assert all(
+            relation.get("valueType") == "list"
+            for relation in ReconcileTransactionsSink.relation_fields
+        )
+
+    def test_get_sink_class_resolves_reconcile_stream(self):
+        target = TargetRillet(config=SAMPLE_CONFIG)
+        assert target.get_sink_class("reconcile-transactions") is ReconcileTransactionsSink
 
 
 class TestReimbursementsSinkPreprocessRecord:
