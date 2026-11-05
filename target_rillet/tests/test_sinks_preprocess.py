@@ -474,6 +474,12 @@ class TestReconcileTransactionsSink:
             }
         ]
 
+    def test_relation_fields_declare_list_value_type(self):
+        assert all(
+            relation.get("valueType") == "list"
+            for relation in ReconcileTransactionsSink.relation_fields
+        )
+
     def test_get_sink_class_resolves_reconcile_stream(self):
         target = TargetRillet(config=SAMPLE_CONFIG)
         assert target.get_sink_class("reconcile-transactions") is ReconcileTransactionsSink

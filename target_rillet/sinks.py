@@ -288,12 +288,18 @@ class ChargesSink(FallbackSink):
 class ReconcileTransactionsSink(FallbackSink):
     """Match bank transactions to ledger records via Rillet cash matching.
 
-    ETL forwards external IDs in ``transaction_ids`` and optional matched-record
-    id lists (charges, bills, reimbursements, etc.). SDK ``relation_fields``
-    resolves each id from same-job target state, then flow snapshots. Charges /
-    bank-transactions (and other matched streams) still write snapshots as usual;
-    this sink POSTs the match (API v4, HTTP 204) and does not snapshot a reconcile
-    entity.
+    ETL forwards external IDs in transaction_ids and optional matched-record
+    id lists (charges, bills, reimbursements, etc.). SDK relation_fields
+    resolves each id from same-job target state or flow snapshots.
+
+    Records sent through the sink will be automatically matched and reconciled 
+    in Rillet.
+
+    Example payload:
+        {
+        "transaction_ids": ["17509021-a931-4e66-9161-f77308bd501d"],
+        "charge_ids": ["17509021-a931-4e66-9161-f77308bd501d"]
+        }
     """
 
     name = "reconcile-transactions"
@@ -303,16 +309,16 @@ class ReconcileTransactionsSink(FallbackSink):
     lookup_subsidiary = False
 
     relation_fields = [
-        {"field": "transaction_ids", "objectName": "bank-transactions"},
-        {"field": "bill_ids", "objectName": "Bills"},
-        {"field": "reimbursement_ids", "objectName": "reimbursements"},
-        {"field": "charge_ids", "objectName": "charges"},
-        {"field": "invoice_ids", "objectName": "invoices"},
-        {"field": "credit_memo_ids", "objectName": "credit-memos"},
-        {"field": "bill_payment_ids", "objectName": "bill_payments"},
-        {"field": "invoice_payment_ids", "objectName": "invoice_payments"},
-        {"field": "journal_entry_ids", "objectName": "JournalEntries"},
-        {"field": "vendor_credit_ids", "objectName": "vendor-credits"},
+        {"field": "transaction_ids", "objectName": "bank-transactions", "valueType": "list"},
+        {"field": "bill_ids", "objectName": "Bills", "valueType": "list"},
+        {"field": "reimbursement_ids", "objectName": "reimbursements", "valueType": "list"},
+        {"field": "charge_ids", "objectName": "charges", "valueType": "list"},
+        {"field": "invoice_ids", "objectName": "invoices", "valueType": "list"},
+        {"field": "credit_memo_ids", "objectName": "credit-memos", "valueType": "list"},
+        {"field": "bill_payment_ids", "objectName": "bill_payments", "valueType": "list"},
+        {"field": "invoice_payment_ids", "objectName": "invoice_payments", "valueType": "list"},
+        {"field": "journal_entry_ids", "objectName": "JournalEntries", "valueType": "list"},
+        {"field": "vendor_credit_ids", "objectName": "vendor-credits", "valueType": "list"},
     ]
 
     def upsert_record(self, record: dict, context: dict):
