@@ -267,20 +267,27 @@ class RilletSink(HotglueSink):
             None,
         )
 
+    @staticmethod
+    def _hierarchy_segments(name: str) -> list[str]:
+        """Split a colon-separated hierarchy name and strip each segment."""
+        return [part.strip() for part in name.split(":") if part.strip()]
+
     def _match_custom_field_value(self, field: dict, value_name: str) -> tuple[dict | None, bool]:
-        """Match a custom field value by exact name, then by hierarchy leaf.
+        """Match a custom field value by exact name, then by hierarchy suffix.
 
         Accounting systems commonly prefix dimension / custom field values with a
-        colon-separated hierarchy (e.g. General & Administrative: Finance).
-        After an exact miss we strip the input and try a full-name match, then
-        split on :, strip each segment, and match the leaf against the incoming
-        value.
+        colon-separated hierarchy (e.g. General & Administrative: Finance or
+        General & Administrative: G&A: Administration). After an exact miss we
+        strip the input and try a full-name match, then split on :, strip each
+        segment, and match when the Rillet option's trailing segments equal the
+        incoming segments. That covers both single-leaf values (Finance) and
+        multi-segment values that themselves contain : (G&A: Administration).
 
         Returns (matched_value, multi_match). A multi-match is when more than
-        one option shares the same leaf — e.g. incoming
-        Finance against both General & Administrative: Finance and
-        Corporate: Finance. Callers must reject those rather than guess or
-        omit them from a full-replace payload.
+        one non-deactivated option shares the same trailing segments — e.g.
+        incoming Finance against both General & Administrative: Finance
+        and Corporate: Finance. Callers must reject those rather than guess
+        or omit them from a full-replace payload.
         """
         values = field.get("values") or []
         exact = next((value for value in values if value["name"] == value_name), None)
@@ -297,13 +304,21 @@ class RilletSink(HotglueSink):
         if trimmed_exact:
             return trimmed_exact, False
 
-        candidates = [
-            value
-            for value in values
-            if not value.get("deactivated")
-            and value["name"].split(":")[-1].strip() == incoming
-        ]
-        # One match, return it
+        incoming_segments = self._hierarchy_segments(incoming)
+        if not incoming_segments:
+            return None, False
+
+        candidates = []
+        for value in values:
+            if value.get("deactivated"):
+                continue
+            value_segments = self._hierarchy_segments(value["name"])
+            if (
+                len(value_segments) >= len(incoming_segments)
+                and value_segments[-len(incoming_segments) :] == incoming_segments
+            ):
+                candidates.append(value)
+
         if len(candidates) == 1:
             return candidates[0], False
         # Multiple matches — signal ambiguity so callers can reject
