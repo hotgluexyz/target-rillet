@@ -466,7 +466,7 @@ class BankAccountsSink(FallbackSink):
         # If Rillet already has a cash account mapped to this GL account_code, reuse it
         # (allows_upserts=False will skip POST instead of creating a new account).
 
-        if not record.get("id") and self.config.get("lookup_existing_bank_accounts", False):
+        if not record.get("id"):
             account_code = record.get("account_code")
             bank_account = self.get_existing_bank_account(record)
             if bank_account:
