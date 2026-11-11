@@ -28,8 +28,8 @@ class RilletSink(HotglueSink):
         "subsidiaries": {"endpoint": "/subsidiaries", "collection": "subsidiaries", "key": "trade_name", "value": "id"},
         "fields": {"endpoint": "/fields", "collection": "fields", "key": "name", "value": "FULL_OBJECT"},
         "vendors": {"endpoint": "/vendors", "collection": "vendors", "value": "OBJECT_LIST"},
-        # API v4 required so account_code is present on bank accounts
-        "bank-accounts": {"endpoint": "/bank-accounts", "collection": "accounts", "key": "account_code", "value": "id", "api_version": "4"},
+        # API v4 required so account_code is present on bank accounts; list keeps all rows per GL code
+        "bank-accounts": {"endpoint": "/bank-accounts", "collection": "accounts", "value": "OBJECT_LIST", "api_version": "4"},
         "tax_rates": {"endpoint": "/tax-rates", "collection": "tax_rates", "key": "code", "value": "FULL_OBJECT"},
     }
 

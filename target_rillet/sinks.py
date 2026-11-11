@@ -432,25 +432,62 @@ class BankAccountsSink(FallbackSink):
     name = "bank-accounts"
     allows_upserts = False
 
+    def _ensure_bank_accounts_cache(self) -> list[dict]:
+        """Load all Rillet bank accounts once; cache is a list (not code-keyed)."""
+        cache = self._lookup_cache.get("bank-accounts")
+        if not isinstance(cache, list):
+            self._refresh_lookup_cache("bank-accounts")
+        return self._lookup_cache["bank-accounts"]
+
+    def get_existing_bank_account(self, record: dict) -> dict | None:
+        """Return a cached bank account when account_code, currency, and subsidiary_id all match."""
+        account_code = record.get("account_code")
+        currency = record.get("currency")
+        subsidiary_id = record.get("subsidiary_id")
+
+        matches = [
+            item
+            for item in self._ensure_bank_accounts_cache()
+            if account_code and item.get("account_code") == account_code
+            and currency and item.get("currency") == currency
+            and subsidiary_id and item.get("subsidiary_id") == subsidiary_id
+        ]
+        if not matches:
+            return None
+        if len(matches) > 1:
+            raise ValueError(
+                f"Multiple bank accounts found for account_code={account_code}, "
+                f"currency={currency}, subsidiary_id={subsidiary_id}."
+            )
+        return matches[0]
+
     def preprocess_record(self, record: dict, context: dict) -> dict:
         record = super().preprocess_record(record, context)
         # If Rillet already has a cash account mapped to this GL account_code, reuse it
         # (allows_upserts=False will skip POST instead of creating a new account).
-        account_code = record.get("account_code")
-        if account_code:
-            bank_account_id = self.lookup_in_cache("bank-accounts", account_code)
-            if bank_account_id:
+
+        if not record.get("id") and self.config.get("lookup_existing_bank_accounts", False):
+            account_code = record.get("account_code")
+            bank_account = self.get_existing_bank_account(record)
+            if bank_account:
                 self.logger.info(
-                    f"Existing bank account {bank_account_id} found for GL account code {account_code}"
+                    f"Existing bank account {bank_account.get('id')} found for GL account code {account_code}"
                 )
-                record["id"] = bank_account_id
+                record["id"] = bank_account.get("id")
         return record
 
     def upsert_record(self, record: dict, context: dict):
-        account_code = record.get("account_code")
         record_id, success, state_updates = super().upsert_record(record, context)
-        if success and record_id and account_code:
-            self.update_lookup_cache("bank-accounts", account_code, record_id)
+        if success and record_id and not state_updates.get("existing"):
+            self.update_lookup_cache_object_list(
+                "bank-accounts",
+                {
+                    "id": record_id,
+                    "account_code": record.get("account_code"),
+                    "currency": record.get("currency"),
+                    "subsidiary_id": record.get("subsidiary_id"),
+                },
+            )
         return record_id, success, state_updates
 
 
