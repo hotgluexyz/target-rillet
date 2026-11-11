@@ -760,6 +760,26 @@ class TestResolveCustomFields:
             {"field_id": "field-1", "field_value_id": "val-sales"},
         ]
 
+    def test_multi_segment_incoming_matches_hierarchy_suffix(self):
+        cache = deepcopy(LOOKUP_CACHE)
+        cache["fields"]["Department"]["values"] = [
+            {
+                "id": "val-ga-admin",
+                "name": "General & Administrative: G&A: Administration",
+                "deactivated": False,
+            },
+            {
+                "id": "val-cx-admin",
+                "name": "Customer Experience: CX: Administration",
+                "deactivated": False,
+            },
+        ]
+        sink = make_sink(ChargesSink, "charges", lookup_cache=cache)
+        resolved = sink._resolve_custom_fields(
+            [{"name": "Department", "value": "G&A: Administration"}]
+        )
+        assert resolved == [{"field_id": "field-1", "field_value_id": "val-ga-admin"}]
+
     def test_multi_match_hierarchy_leaf_raises(self):
         cache = deepcopy(LOOKUP_CACHE)
         cache["fields"]["Department"]["values"] = [
