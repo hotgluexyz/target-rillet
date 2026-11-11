@@ -6,8 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from target_rillet.client import RilletSink
+from target_rillet.client import RilletSink, bank_account_cache_key
 from target_rillet.sinks import (
+    BankAccountsSink,
     BankTransactionsSink,
     BillsSink,
     ChargesSink,
@@ -733,3 +734,64 @@ class TestUpdateLookupCacheObjectList:
         )
         vendors = sink._lookup_cache["vendors"]
         assert [vendor["id"] for vendor in vendors] == ["vendor-1", "vendor-2"]
+
+
+class TestBankAccountsSink:
+    def test_reuses_distinct_ids_per_currency_on_same_gl(self):
+        cache = {
+            "bank-accounts": {
+                bank_account_cache_key("21001", "USD"): "ba-usd",
+                bank_account_cache_key("21001", "CAD"): "ba-cad",
+            },
+            "subsidiaries": {},
+        }
+        sink = make_sink(BankAccountsSink, "bank-accounts", lookup_cache=cache)
+
+        usd = sink.preprocess_record(
+            {"account_code": "21001", "currency": "USD", "name": "Bloomerang--USD"},
+            {},
+        )
+        cad = sink.preprocess_record(
+            {"account_code": "21001", "currency": "CAD", "name": "Bloomerang--CAD"},
+            {},
+        )
+
+        assert usd["id"] == "ba-usd"
+        assert cad["id"] == "ba-cad"
+
+    def test_upsert_writes_composite_cache_key(self):
+        sink = make_sink(BankAccountsSink, "bank-accounts", lookup_cache={})
+        sink.request_api = MagicMock(
+            return_value=MagicMock(json=MagicMock(return_value={"id": "ba-new"}))
+        )
+
+        record_id, success, _ = sink.upsert_record(
+            {"account_code": "21001", "currency": "USD", "name": "Bloomerang--USD"},
+            {},
+        )
+
+        assert success
+        assert record_id == "ba-new"
+        assert sink.lookup_in_cache(
+            "bank-accounts", bank_account_cache_key("21001", "USD")
+        ) == "ba-new"
+        reused = sink.preprocess_record(
+            {"account_code": "21001", "currency": "USD", "name": "Bloomerang--USD"},
+            {},
+        )
+        assert reused["id"] == "ba-new"
+
+    def test_refresh_lookup_cache_keys_by_account_code_and_currency(self):
+        sink = make_sink(BankAccountsSink, "bank-accounts", lookup_cache={})
+        sink.get_paginated_response = MagicMock(
+            return_value=[
+                {"id": "ba-usd", "account_code": "21001", "currency": "USD"},
+                {"id": "ba-cad", "account_code": "21001", "currency": "CAD"},
+                {"id": "ba-unmapped", "account_code": None, "currency": "USD"},
+            ]
+        )
+        sink._refresh_lookup_cache("bank-accounts")
+        assert sink._lookup_cache["bank-accounts"] == {
+            "21001|USD": "ba-usd",
+            "21001|CAD": "ba-cad",
+        }

@@ -5,7 +5,7 @@ from __future__ import annotations
 import requests
 from hotglue_singer_sdk.exceptions import FatalAPIError
 
-from target_rillet.client import RilletSink
+from target_rillet.client import RilletSink, bank_account_cache_key
 
 
 class JournalsSink(RilletSink):
@@ -434,23 +434,31 @@ class BankAccountsSink(FallbackSink):
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
         record = super().preprocess_record(record, context)
-        # If Rillet already has a cash account mapped to this GL account_code, reuse it
+        # If Rillet already has a cash account mapped to this GL+currency, reuse it
         # (allows_upserts=False will skip POST instead of creating a new account).
         account_code = record.get("account_code")
-        if account_code:
-            bank_account_id = self.lookup_in_cache("bank-accounts", account_code)
+        currency = record.get("currency")
+        if account_code and currency:
+            cache_key = bank_account_cache_key(account_code, currency)
+            bank_account_id = self.lookup_in_cache("bank-accounts", cache_key)
             if bank_account_id:
                 self.logger.info(
-                    f"Existing bank account {bank_account_id} found for GL account code {account_code}"
+                    f"Existing bank account {bank_account_id} found for "
+                    f"GL account code {account_code} currency {currency}"
                 )
                 record["id"] = bank_account_id
         return record
 
     def upsert_record(self, record: dict, context: dict):
         account_code = record.get("account_code")
+        currency = record.get("currency")
         record_id, success, state_updates = super().upsert_record(record, context)
-        if success and record_id and account_code:
-            self.update_lookup_cache("bank-accounts", account_code, record_id)
+        if success and record_id and account_code and currency:
+            self.update_lookup_cache(
+                "bank-accounts",
+                bank_account_cache_key(account_code, currency),
+                record_id,
+            )
         return record_id, success, state_updates
 
 

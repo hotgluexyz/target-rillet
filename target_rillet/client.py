@@ -12,6 +12,11 @@ from hotglue_singer_sdk.exceptions import RetriableAPIError
 from target_rillet.attachment_helpers import resolve_attachment_filename_and_type
 
 
+def bank_account_cache_key(account_code: str, currency: str) -> str:
+    """Composite lookup key so same GL can map to one bank account per currency."""
+    return f"{account_code}|{currency}"
+
+
 class RilletSink(HotglueSink):
     """Base Rillet target sink class."""
 
@@ -122,9 +127,15 @@ class RilletSink(HotglueSink):
             self._lookup_cache[lookup_name] = items
         else:
             if lookup_name == "bank-accounts":
-                # Don't include bank accounts not mapped to a GL account
+                # Don't include bank accounts not mapped to a GL account.
+                # Key by account_code|currency so multi-currency banks on one GL stay distinct.
                 items = [item for item in items if item.get(cfg["key"]) is not None]
-            self._lookup_cache[lookup_name] = {item[cfg["key"]]: item[cfg["value"]] for item in items}
+                self._lookup_cache[lookup_name] = {
+                    bank_account_cache_key(item[cfg["key"]], item.get("currency")): item[cfg["value"]]
+                    for item in items
+                }
+            else:
+                self._lookup_cache[lookup_name] = {item[cfg["key"]]: item[cfg["value"]] for item in items}
             if lookup_name == "accounts":
                 self._lookup_cache[f"{lookup_name}_by_id"] = {item["id"]: item[cfg["value"]] for item in items}
                 # also store all accounts of type expense that are tied to a prepaid account
