@@ -760,7 +760,7 @@ class TestResolveCustomFields:
             {"field_id": "field-1", "field_value_id": "val-sales"},
         ]
 
-    def test_multi_match_hierarchy_leaf_skips(self, caplog):
+    def test_multi_match_hierarchy_leaf_raises(self):
         cache = deepcopy(LOOKUP_CACHE)
         cache["fields"]["Department"]["values"] = [
             {
@@ -777,14 +777,12 @@ class TestResolveCustomFields:
         sink = make_sink(ChargesSink, "charges", lookup_cache=cache)
         sink.request_api = MagicMock()
 
-        with caplog.at_level("WARNING"):
-            resolved = sink._resolve_custom_fields(
+        with pytest.raises(ValueError, match="Multiple field values matched 'Finance'"):
+            sink._resolve_custom_fields(
                 [{"name": "Department", "value": "Finance"}]
             )
 
-        assert resolved == []
         sink.request_api.assert_not_called()
-        assert "Multiple field values matched 'Finance'" in caplog.text
 
     def test_unknown_value_still_skips_when_create_disabled(self, caplog):
         cache = deepcopy(LOOKUP_CACHE)
