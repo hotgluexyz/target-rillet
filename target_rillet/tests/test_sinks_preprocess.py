@@ -702,6 +702,95 @@ class TestResolveCustomFields:
         assert resolved == [{"field_id": "field-1", "field_value_id": "val-1"}]
         sink.request_api.assert_not_called()
 
+    def test_exact_match_wins_over_hierarchy_leaf(self):
+        cache = deepcopy(LOOKUP_CACHE)
+        cache["fields"]["Department"]["values"] = [
+            {"id": "val-finance", "name": "Finance", "deactivated": False},
+            {
+                "id": "val-ga-finance",
+                "name": "General & Administrative: Finance",
+                "deactivated": False,
+            },
+        ]
+        sink = make_sink(ChargesSink, "charges", lookup_cache=cache)
+        resolved = sink._resolve_custom_fields(
+            [{"name": "Department", "value": "Finance"}]
+        )
+        assert resolved == [{"field_id": "field-1", "field_value_id": "val-finance"}]
+
+    def test_hierarchy_leaf_match_after_split_and_strip(self):
+        cache = deepcopy(LOOKUP_CACHE)
+        cache["fields"]["Department"]["values"] = [
+            {
+                "id": "val-ga-finance",
+                "name": "General & Administrative: Finance",
+                "deactivated": False,
+            },
+            {
+                "id": "val-sales",
+                "name": "Sales & Marketing: Sales : New Sales",
+                "deactivated": False,
+            },
+        ]
+        sink = make_sink(ChargesSink, "charges", lookup_cache=cache)
+        resolved = sink._resolve_custom_fields(
+            [
+                {"name": "Department", "value": "Finance"},
+                {"name": "Department", "value": " New Sales "},
+            ]
+        )
+        assert resolved == [
+            {"field_id": "field-1", "field_value_id": "val-ga-finance"},
+            {"field_id": "field-1", "field_value_id": "val-sales"},
+        ]
+
+    def test_multi_match_hierarchy_leaf_skips(self, caplog):
+        cache = deepcopy(LOOKUP_CACHE)
+        cache["fields"]["Department"]["values"] = [
+            {
+                "id": "val-1",
+                "name": "General & Administrative: Finance",
+                "deactivated": False,
+            },
+            {
+                "id": "val-2",
+                "name": "Corporate: Finance",
+                "deactivated": False,
+            },
+        ]
+        sink = make_sink(ChargesSink, "charges", lookup_cache=cache)
+        sink.request_api = MagicMock()
+
+        with caplog.at_level("WARNING"):
+            resolved = sink._resolve_custom_fields(
+                [{"name": "Department", "value": "Finance"}]
+            )
+
+        assert resolved == []
+        sink.request_api.assert_not_called()
+        assert "Multiple field values matched 'Finance'" in caplog.text
+
+    def test_unknown_value_still_skips_when_create_disabled(self, caplog):
+        cache = deepcopy(LOOKUP_CACHE)
+        cache["fields"]["Department"]["values"] = [
+            {
+                "id": "val-ga-finance",
+                "name": "General & Administrative: Finance",
+                "deactivated": False,
+            },
+        ]
+        sink = make_sink(ChargesSink, "charges", lookup_cache=cache)
+        sink.request_api = MagicMock()
+
+        with caplog.at_level("WARNING"):
+            resolved = sink._resolve_custom_fields(
+                [{"name": "Department", "value": "Human Resources"}]
+            )
+
+        assert resolved == []
+        sink.request_api.assert_not_called()
+        assert "Field value Human Resources for field Department not found" in caplog.text
+
 
 class TestUpdateLookupCacheObjectList:
     def test_updates_cached_vendor_by_id(self):

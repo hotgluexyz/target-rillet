@@ -267,6 +267,44 @@ class RilletSink(HotglueSink):
             None,
         )
 
+    def _match_custom_field_value(self, field: dict, value_name: str) -> tuple[dict | None, bool]:
+        """Match a custom field value by exact name, then by hierarchy leaf.
+
+        Accounting systems commonly prefix dimension / custom field values with a
+        colon-separated hierarchy (e.g. General & Administrative: Finance).
+        After an exact miss we split on :, strip each segment, and match the
+        second part of the name against the incoming value.
+
+        Returns (matched_value, multi_match). A multi-match is when more than
+        one option shares the same leaf — e.g. incoming
+        Finance against both General & Administrative: Finance and
+        Corporate: Finance. Those are skipped rather than guessed or
+        auto-created.
+        """
+        values = field.get("values") or []
+        exact = next((value for value in values if value["name"] == value_name), None)
+        if exact:
+            return exact, False
+
+        incoming = value_name.strip()
+        candidates = [
+            value
+            for value in values
+            if not value.get("deactivated")
+            and value["name"].split(":")[-1].strip() == incoming
+        ]
+        # One match, return it
+        if len(candidates) == 1:
+            return candidates[0], False
+        # Multiple matches, log a warning and return None
+        if len(candidates) > 1:
+            self.logger.warning(
+                f"Multiple field values matched {value_name!r} for field "
+                f"{field.get('name')!r}: {[c['name'] for c in candidates]}. Skipping..."
+            )
+            return None, True
+        return None, False
+
     def _resolve_custom_fields(self, custom_fields: list[dict]) -> list[dict]:
         """Resolve {name, value} custom field entries to {field_id, field_value_id}.
 
@@ -295,10 +333,9 @@ class RilletSink(HotglueSink):
                 self.logger.warning(f"Field name {custom_field['name']} not found in Rillet. Skipping...")
                 continue
 
-            field_value = next(
-                (value for value in field["values"] if value["name"] == custom_field["value"]),
-                None,
-            )
+            field_value, multi_match = self._match_custom_field_value(field, custom_field["value"])
+            if multi_match:
+                continue
             if not field_value:
                 if not create_missing:
                     self.logger.warning(
