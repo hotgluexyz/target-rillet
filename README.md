@@ -30,6 +30,8 @@ pip install .
 |-----------|------------------------------------------|
 | `api_key` | Your Rillet API key                      |
 | `sandbox` | Use the sandbox environment (default: false) |
+| `lookup_existing_bank_accounts` | When `true`, match incoming **bank-accounts** records to existing Rillet cash accounts before create (default: `false`) |
+| `create_missing_field_values` | When `true`, create missing custom field values in Rillet during resolve (default: `false`) |
 
 Create a `config.json` file:
 
@@ -82,6 +84,32 @@ Posts journal entries to Rillet via `POST /journal-entries`. Supports both creat
 **Optional fields:** `subsidiary_id`, `reversal_date`, `attachmentUrl`, `exchange_rate`
 
 To **update** an existing journal entry, include `journal_entry_id` in the record.
+
+### Bank accounts (`bank-accounts`)
+
+Creates cash/bank accounts in Rillet (`POST /bank-accounts`, API v4). Updates are not supported (`allows_upserts` is off); records that already have a target `id` are treated as existing and are not posted again.
+
+**Optional: reuse existing accounts** — Set `"lookup_existing_bank_accounts": true` in config when you want to avoid duplicate cash accounts for the same GL mapping.
+
+Lookup runs only when **all** of the following are true:
+
+- The incoming record has no `id` (not in target state from a prior successful sync).
+- `lookup_existing_bank_accounts` is `true`.
+- After preprocess, the record has `account_code`, `currency`, and `subsidiary_id` (subsidiary is resolved from `subsidiary_id`, `subsidiaryId`, or `subsidiaryName` like other fallback streams).
+
+The target loads Rillet bank accounts into a cache and looks for a single match where those three fields are equal. If one match is found, its Rillet `id` is set on the record and the write is skipped (counted as **existing**). If none match, a new account is created. If more than one match, the job fails with an error.
+
+If the flag is `false` or the record already has an `id`, no remote lookup is performed; behavior is unchanged from a normal create-or-skip-existing flow.
+
+Example config:
+
+```json
+{
+  "api_key": "your-rillet-api-key",
+  "sandbox": false,
+  "lookup_existing_bank_accounts": true
+}
+```
 
 ## Usage
 
