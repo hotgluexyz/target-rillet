@@ -718,6 +718,22 @@ class TestResolveCustomFields:
         )
         assert resolved == [{"field_id": "field-1", "field_value_id": "val-finance"}]
 
+    def test_trimmed_full_name_wins_over_hierarchy_leaf(self):
+        cache = deepcopy(LOOKUP_CACHE)
+        cache["fields"]["Department"]["values"] = [
+            {"id": "val-finance", "name": "Finance", "deactivated": False},
+            {
+                "id": "val-ga-finance",
+                "name": "General & Administrative: Finance",
+                "deactivated": False,
+            },
+        ]
+        sink = make_sink(ChargesSink, "charges", lookup_cache=cache)
+        resolved = sink._resolve_custom_fields(
+            [{"name": "Department", "value": " Finance "}]
+        )
+        assert resolved == [{"field_id": "field-1", "field_value_id": "val-finance"}]
+
     def test_hierarchy_leaf_match_after_split_and_strip(self):
         cache = deepcopy(LOOKUP_CACHE)
         cache["fields"]["Department"]["values"] = [
@@ -790,6 +806,19 @@ class TestResolveCustomFields:
         assert resolved == []
         sink.request_api.assert_not_called()
         assert "Field value Human Resources for field Department not found" in caplog.text
+
+    def test_non_string_value_skips_when_create_disabled(self, caplog):
+        sink = make_sink(ChargesSink, "charges", lookup_cache=deepcopy(LOOKUP_CACHE))
+        sink.request_api = MagicMock()
+
+        with caplog.at_level("WARNING"):
+            resolved = sink._resolve_custom_fields(
+                [{"name": "Department", "value": 42}]
+            )
+
+        assert resolved == []
+        sink.request_api.assert_not_called()
+        assert "Field value 42 for field Department not found" in caplog.text
 
 
 class TestUpdateLookupCacheObjectList:
