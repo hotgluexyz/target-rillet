@@ -215,6 +215,19 @@ class FallbackSink(RilletSink):
     def endpoint(self, value: str) -> None:
         self._endpoint = value
 
+    def _failed_charge_for_external_id(self, external_id: str) -> bool:
+        """True when this job's charges bookmark for external_id failed or has no id."""
+        if not external_id:
+            return False
+        bookmarks = (self._target._latest_state or {}).get("bookmarks", {}).get("charges") or []
+        state = next(
+            (b for b in bookmarks if b.get("externalId") == str(external_id)),
+            None,
+        )
+        if state is None:
+            return False
+        return (not state.get("success")) or (not state.get("id"))
+
     def preprocess_record(self, record: dict, context: dict) -> dict:
         """Handle errors by posting to the fallback sink."""
         if self.lookup_subsidiary:
@@ -239,6 +252,16 @@ class BankTransactionsSink(FallbackSink):
     ]
     
     def upsert_record(self, record: dict, context: dict):
+        # externalId is popped before upsert
+        # ETL matches a charge and bank transaction via external_references.id
+        refs = record.get("external_references") or []
+        external_id = refs[0].get("id") if refs and isinstance(refs[0], dict) else None
+        if self._failed_charge_for_external_id(external_id):
+            self.logger.info(
+                "Skipping bank-transaction %s because matching charge failed",
+                external_id,
+            )
+            return None, True, {"existing": True}
         try:
             return super().upsert_record(record, context)
         except Exception as e:
@@ -340,6 +363,13 @@ class ReconcileTransactionsSink(FallbackSink):
         """
         # Synthetic snapshot key only — not part of the Rillet match body.
         record_id = record.pop("id", None)
+
+        if self._failed_charge_for_external_id(record_id):
+            self.logger.info(
+                "Skipping reconcile %s because matching charge failed",
+                record_id,
+            )
+            return record_id, True, {"existing": True}
 
         response = requests.request(
             method="POST",
