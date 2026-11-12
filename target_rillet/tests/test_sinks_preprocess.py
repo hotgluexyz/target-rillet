@@ -331,6 +331,40 @@ class TestBankTransactionsSinkPreprocessRecord:
         )
         assert payload["subsidiary_id"] == "sub-123"
 
+    def test_upsert_skips_when_matching_charge_failed(self, monkeypatch):
+        sink = make_sink(
+            BankTransactionsSink, "bank-transactions", lookup_cache=LOOKUP_CACHE
+        )
+        sink._target._latest_state = {
+            "bookmarks": {
+                "charges": [
+                    {"externalId": "ext-1", "success": False, "error": "prepaid"},
+                ],
+            }
+        }
+        called = []
+
+        def fail_if_called(*args, **kwargs):
+            called.append(True)
+            raise AssertionError("should not POST bank-transaction")
+
+        monkeypatch.setattr(
+            FallbackSink, "upsert_record", fail_if_called
+        )
+
+        record_id, success, state_updates = sink.upsert_record(
+            {
+                "bank_account_id": "ba-1",
+                "external_references": [{"type": "Navan-Hotglue", "id": "ext-1"}],
+            },
+            {},
+        )
+
+        assert record_id is None
+        assert success is True
+        assert state_updates == {"existing": True}
+        assert called == []
+
 
 class TestChargesSinkPreprocessRecord:
     def test_resolves_line_item_accounts(self):
@@ -547,6 +581,38 @@ class TestReconcileTransactionsSink:
         assert record_id == "navan-txn-1"
         assert success is True
         assert state_updates == {"existing": True}
+
+    def test_upsert_skips_when_matching_charge_failed(self, monkeypatch):
+        sink = make_sink(
+            ReconcileTransactionsSink, "reconcile-transactions", lookup_cache={}
+        )
+        sink._target._latest_state = {
+            "bookmarks": {
+                "charges": [
+                    {"externalId": "navan-txn-1", "success": False, "error": "prepaid"},
+                ],
+            }
+        }
+        calls = []
+
+        monkeypatch.setattr(
+            "target_rillet.sinks.requests.request",
+            lambda *args, **kwargs: calls.append(True) or None,
+        )
+
+        record_id, success, state_updates = sink.upsert_record(
+            {
+                "id": "navan-txn-1",
+                "transaction_ids": ["navan-txn-1"],
+                "charge_ids": ["navan-txn-1"],
+            },
+            {},
+        )
+
+        assert record_id == "navan-txn-1"
+        assert success is True
+        assert state_updates == {"existing": True}
+        assert calls == []
 
     def test_relation_fields_declare_list_value_type(self):
         assert all(
