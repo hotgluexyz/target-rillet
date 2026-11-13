@@ -246,6 +246,11 @@ class FallbackSink(RilletSink):
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
         """Handle errors by posting to the fallback sink."""
+        # ETL attaches hg_error on the header for failed records.
+        hg_error = record.pop("hg_error", None)
+        if hg_error is not None:
+            raise ValueError(str(hg_error))
+
         if self.lookup_subsidiary:
             record["subsidiary_id"] = record.get("subsidiary_id") or self._resolve_subsidiary(record)
         if self.lookup_vendor:

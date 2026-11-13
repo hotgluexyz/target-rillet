@@ -170,11 +170,6 @@ class RilletSink(HotglueSink):
 
     def upsert_record(self, record: dict, context: dict):
         """Create or update a journal entry in Rillet."""
-        # ETL will attach hg_error (on error) - raise here to fail this record in target state.
-        hg_error = record.pop("hg_error", None)
-        if hg_error is not None:
-            raise ValueError(str(hg_error))
-
         state_updates = dict()
         method = "POST"
         endpoint = self.endpoint

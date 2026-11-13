@@ -398,12 +398,12 @@ class TestChargesSinkPreprocessRecord:
         assert "accountId" not in payload["items"][2]
         assert payload["items"][3]["account_code"] == "5000"
 
-    def test_raises_hg_error_on_upsert(self):
+    def test_raises_hg_error_on_preprocess(self):
         sink = make_sink(ChargesSink, "charges", lookup_cache=LOOKUP_CACHE)
         with pytest.raises(ValueError, match="Failed to parse amortization date"):
-            sink.upsert_record(
+            sink.preprocess_record(
                 {
-                    "vendor_id": "vendor-1",
+                    "vendor_id": "missing-vendor",
                     "subsidiaryId": "sub-1",
                     "hg_error": (
                         "Failed to parse amortization date for transaction txn-1: "
