@@ -170,6 +170,11 @@ class RilletSink(HotglueSink):
 
     def upsert_record(self, record: dict, context: dict):
         """Create or update a journal entry in Rillet."""
+        # ETL will attach hg_error (on error) - raise here to fail this record in target state.
+        hg_error = record.pop("hg_error", None)
+        if hg_error is not None:
+            raise ValueError(str(hg_error))
+
         state_updates = dict()
         method = "POST"
         endpoint = self.endpoint
@@ -431,12 +436,7 @@ class RilletSink(HotglueSink):
             self._refresh_lookup_cache("accounts")
 
         for line in lines:
-            service_period = line.get("service_period")
-            if service_period:
-                # Navan ETL attaches errors on service_period.error so
-                # other records can still sync - raise here to fail this record in target state.
-                if service_period.get("error"):
-                    raise ValueError(service_period["error"])
+            if line.get("service_period"):
                 has_service_period = True
                 if line.get("account_code") in self._lookup_cache["accounts_with_prepaid_account"]:
                     has_item_with_prepaid_account = True

@@ -398,24 +398,22 @@ class TestChargesSinkPreprocessRecord:
         assert "accountId" not in payload["items"][2]
         assert payload["items"][3]["account_code"] == "5000"
 
-    def test_raises_service_period_etl_error(self):
+    def test_raises_hg_error_on_upsert(self):
         sink = make_sink(ChargesSink, "charges", lookup_cache=LOOKUP_CACHE)
         with pytest.raises(ValueError, match="Failed to parse amortization date"):
-            sink.preprocess_record(
+            sink.upsert_record(
                 {
                     "vendor_id": "vendor-1",
                     "subsidiaryId": "sub-1",
+                    "hg_error": (
+                        "Failed to parse amortization date for transaction txn-1: "
+                        "field 'Service/Event Dates' value 'bad' with format "
+                        "'%b %d-%d, %Y': boom"
+                    ),
                     "items": [
                         {
                             "account_code": "60214",
                             "amount": {"amount": "10.00", "currency": "USD"},
-                            "service_period": {
-                                "error": (
-                                    "Failed to parse amortization date for "
-                                    "transaction txn-1: field 'Service/Event Dates' "
-                                    "value 'bad' with format '%b %d-%d, %Y': boom"
-                                )
-                            },
                         }
                     ],
                 },
