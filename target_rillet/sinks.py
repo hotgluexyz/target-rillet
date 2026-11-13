@@ -215,18 +215,34 @@ class FallbackSink(RilletSink):
     def endpoint(self, value: str) -> None:
         self._endpoint = value
 
-    def _failed_charge_for_external_id(self, external_id: str) -> bool:
-        """True when this job's charges bookmark for external_id failed or has no id."""
+    def _failed_matched_record_for_external_id(self, external_id: str) -> bool:
+        """True when a same-job record bookmark for external_id failed or has no id.
+
+        Ledger streams are the objects cash reconcile can match (like charges, bills,
+        reimbursements, etc.)
+        
+        They are not bank-transactions themselves.
+        """
         if not external_id:
             return False
-        bookmarks = (self._target._latest_state or {}).get("bookmarks", {}).get("charges") or []
-        state = next(
-            (b for b in bookmarks if b.get("externalId") == str(external_id)),
-            None,
-        )
-        if state is None:
-            return False
-        return (not state.get("success")) or (not state.get("id"))
+        bookmarks_by_stream = (self._target._latest_state or {}).get("bookmarks") or {}
+        ledger_streams = {
+            rel["objectName"]
+            for rel in ReconcileTransactionsSink.relation_fields
+            if rel.get("objectName") and rel["objectName"] != "bank-transactions"
+        }
+        for stream in ledger_streams:
+            state = next(
+                (
+                    b
+                    for b in (bookmarks_by_stream.get(stream) or [])
+                    if b.get("externalId") == str(external_id)
+                ),
+                None,
+            )
+            if state is not None and ((not state.get("success")) or (not state.get("id"))):
+                return True
+        return False
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
         """Handle errors by posting to the fallback sink."""
@@ -252,13 +268,12 @@ class BankTransactionsSink(FallbackSink):
     ]
     
     def upsert_record(self, record: dict, context: dict):
-        # externalId is popped before upsert
-        # ETL matches a charge and bank transaction via external_references.id
+        # externalId is popped before upsert; ETL pairs ledger/BT via external_references.id
         refs = record.get("external_references") or []
         external_id = refs[0].get("id") if refs and isinstance(refs[0], dict) else None
-        if self._failed_charge_for_external_id(external_id):
+        if self._failed_matched_record_for_external_id(external_id):
             self.logger.info(
-                "Skipping bank-transaction %s because matching charge failed",
+                "Skipping bank-transaction %s because matching record failed",
                 external_id,
             )
             return None, True, {"existing": True}
@@ -364,9 +379,9 @@ class ReconcileTransactionsSink(FallbackSink):
         # Synthetic snapshot key only — not part of the Rillet match body.
         record_id = record.pop("id", None)
 
-        if self._failed_charge_for_external_id(record_id):
+        if self._failed_matched_record_for_external_id(record_id):
             self.logger.info(
-                "Skipping reconcile %s because matching charge failed",
+                "Skipping reconcile %s because matching record failed",
                 record_id,
             )
             return record_id, True, {"existing": True}

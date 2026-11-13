@@ -331,14 +331,14 @@ class TestBankTransactionsSinkPreprocessRecord:
         )
         assert payload["subsidiary_id"] == "sub-123"
 
-    def test_upsert_skips_when_matching_charge_failed(self, monkeypatch):
+    def test_upsert_skips_when_matching_record_failed(self, monkeypatch):
         sink = make_sink(
             BankTransactionsSink, "bank-transactions", lookup_cache=LOOKUP_CACHE
         )
         sink._target._latest_state = {
             "bookmarks": {
-                "charges": [
-                    {"externalId": "ext-1", "success": False, "error": "prepaid"},
+                "reimbursements": [
+                    {"externalId": "ext-1", "success": False, "error": "invalid"},
                 ],
             }
         }
@@ -582,7 +582,7 @@ class TestReconcileTransactionsSink:
         assert success is True
         assert state_updates == {"existing": True}
 
-    def test_upsert_skips_when_matching_charge_failed(self, monkeypatch):
+    def test_upsert_skips_when_matching_record_failed(self, monkeypatch):
         sink = make_sink(
             ReconcileTransactionsSink, "reconcile-transactions", lookup_cache={}
         )
