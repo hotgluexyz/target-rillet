@@ -432,11 +432,11 @@ class RilletSink(HotglueSink):
 
         for line in lines:
             service_period = line.get("service_period")
-            # Navan ETL attaches errors on service_period.error so
-            # other records can still sync - raise here to fail this record in target state.
-            if service_period.get("error"):
-                raise ValueError(service_period["error"])
             if service_period:
+                # Navan ETL attaches errors on service_period.error so
+                # other records can still sync - raise here to fail this record in target state.
+                if service_period.get("error"):
+                    raise ValueError(service_period["error"])
                 has_service_period = True
                 if line.get("account_code") in self._lookup_cache["accounts_with_prepaid_account"]:
                     has_item_with_prepaid_account = True
