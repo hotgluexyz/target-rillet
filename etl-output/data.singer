@@ -1,0 +1,7 @@
+{"type": "SCHEMA", "stream": "vendors", "schema": {"type": ["object", "null"], "properties": {}}, "key_properties": []}
+{"type": "STATE", "value": {}}
+{"type": "SCHEMA", "stream": "bank-accounts", "schema": {"type": ["object", "null"], "properties": {}}, "key_properties": []}
+{"type": "STATE", "value": {}}
+{"type": "SCHEMA", "stream": "bank-transactions", "schema": {"type": ["object", "null"], "properties": {"bank_account_id": {"type": ["string", "null"]}, "date": {"type": ["string", "null"]}, "name": {"type": ["string", "null"]}, "merchant": {"type": ["string", "null"]}, "net_amount": {"type": ["object", "null"], "properties": {"amount": {"type": ["number", "null"]}, "currency": {"type": ["string", "null"]}}}, "pending": {"type": ["boolean", "null"]}, "externalId": {"type": ["string", "null"]}, "external_references": {"type": ["array", "null"], "items": {"type": ["object", "string", "null"]}}}}, "key_properties": []}
+{"type": "RECORD", "stream": "bank-transactions", "record": {"bank_account_id": "019e7244-1295-73bf-be86-7f94ece2e03e--USD", "date": "2026-11-09T00:00:00.000000Z", "name": "Ted's Reimbursement - 09 Nov, 2026", "merchant": "Ted Contreras", "net_amount": {"amount": -27.5, "currency": "USD"}, "pending": false, "externalId": "c174be39-e01c-4fa9-9cbe-9687c1566121", "external_references": [{"type": "Airbase-Hotglue", "id": "c174be39-e01c-4fa9-9cbe-9687c1566121", "url": "https://stage.airbase.io/accounting/ledger-entries/c174be39-e01c-4fa9-9cbe-9687c1566121/"}]}}
+{"type": "STATE", "value": {}}

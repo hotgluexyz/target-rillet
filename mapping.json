@@ -1,0 +1,184 @@
+{
+    "write": {
+        "accounts": {
+            "externalId": "id",
+            "name": "name",
+            "accountNumber": "code",
+            "type": "type",
+            "category": "subtype",
+            "subsidiaryRef": "subsidiaries",
+            "currency": "currency"
+        },
+        "vendors": {
+            "externalId": "id",
+            "vendorName": "name",
+            "vendorNumber": "id",
+            "subsidiaryRef": "subsidiaries"
+        },
+        "subsidiaries": {
+            "subsidiaryNumber": "id",
+            "name": "trade_name",
+            "currency": "currency",
+            "externalId": "id",
+            "addresses": [
+                {
+                    "country": "country"
+                }
+            ]
+        },
+        "currencies": {
+            "erp_reference_id": "currency",
+            "iso_code": "currency",
+            "name": "name",
+            "symbol": "currency",
+            "externalId": "currency"
+        },
+        "tags": {
+            "externalId": "externalId",
+            "erp_reference_id": "value_id",
+            "name": "name",
+            "type_label": "type_label",
+            "subsidiary_reference_ids": "subsidiary_reference_ids"
+        }
+    },
+    "read": {
+        "bills": {
+            "externalId": "airbase_id",
+            "billNumber": "invoice_number",
+            "vendorId": "vendor.erp_reference_id",
+            "currency": "currency.iso_code",
+            "dueDate": "due_date",
+            "totalAmount": "total_amount",
+            "issueDate": "entry_date",
+            "expenses": "expenses",
+            "notes": "notes",
+            "description": "notes",
+            "subsidiaryId": "subsidiary_id",
+            "attachments": [
+                {
+                    "url": "receipt_link"
+                }
+            ],
+            "customFields": "custom_fields"
+        },
+        "bill_expenses": {
+            "accountNumber": "accountNumber",
+            "description": "description",
+            "service_period": "service_period",
+            "amount": "amount",
+            "customFields": "custom_fields"
+        },
+        "charges": {
+            "vendor_id": "vendor.erp_reference_id",
+            "charge_date": "entry_date",
+            "impact_date": "payment_entry_date",
+            "subsidiaryId": "subsidiary_id",
+            "external_references": "external_references",
+            "items": "items",
+            "credit_card_account_code": "credit_card_account_code",
+            "externalId": "airbase_id"
+        },
+        "charge_lines": {
+            "description": "description",
+            "account_code": "accountNumber",
+            "amount": {
+                "amount": "amount",
+                "currency": "currency.iso_code"
+            },
+            "service_period": "service_period",
+            "fields": "fields"
+        },
+        "reimbursements": {
+            "vendor_id": "vendor.erp_reference_id",
+            "reimbursement_date": "entry_date",
+            "payable_account_code": "ap_account.erp_reference_id",
+            "impact_date": "payment_entry_date",
+            "subsidiaryId": "subsidiary_id",
+            "external_references": "external_references",
+            "items": "items",
+            "externalId": "airbase_id"
+        },
+        "reimbursement_items": {
+            "description": "description",
+            "account_code": "accountNumber",
+            "amount": {
+                "amount": "amount",
+                "currency": "currency.iso_code"
+            },
+            "service_period": "service_period",
+            "fields": "fields"
+        },
+        "cashbacks": {
+            "externalId": "airbase_id",
+            "description": "notes",
+            "transactionDate": "entry_date",
+            "currency": "currency",
+            "supplierName": "vendor.name",
+            "subsidiaryId": "subsidiary_id",
+            "lineItems": "items"
+        },
+        "cashback_items": {
+            "accountNumber": "accountNumber",
+            "description": "description",
+            "entryType": "entryType",
+            "debitAmount": "debitAmount",
+            "creditAmount": "creditAmount"
+        },
+        "vendors": {
+            "name": "name",
+            "email": "email",
+            "externalId": "airbase_id"
+        },
+        "vendor_credits": {
+            "date": "entry_date",
+            "gl_impact_date": "entry_date",
+            "memo": "notes",
+            "line_items": "line_items",
+            "vendor_id": "vendor.erp_reference_id",
+            "subsidiary_id": "subsidiary_id",
+            "externalId": "airbase_id",
+            "credit_number": "airbase_id"
+        },
+        "vendor_credit_lines": {
+            "account_code": "accountNumber",
+            "description": "description",
+            "amount": {
+                "amount": "amount",
+                "currency": "currency.iso_code"
+            },
+            "fields": "fields"
+        },
+        "bank_transactions": {
+            "bank_account_id": "bank_account_id",
+            "date": "entry_date",
+            "name": "notes",
+            "merchant": "vendor.name",
+            "net_amount": {
+                "amount": "total_amount",
+                "currency": "currency.iso_code"
+            },
+            "pending": "pending",
+            "externalId": "airbase_id",
+            "external_references": "external_references"
+        },
+        "bill_payments": {
+            "bill_id": "bill_id",
+            "date": "entry_date",
+            "amount": {
+                "amount": "total_amount",
+                "currency": "currency.erp_reference_id"
+            },
+            "account_code": "bank_account.erp_reference_id",
+            "externalId": "airbase_id"
+        },
+        "vendor_credit_payments": {
+            "bill_id": "bill_id",
+            "vendor_credit_id": "vendor_credit_id",
+            "amount": {
+                "amount": "total_amount",
+                "currency": "currency.erp_reference_id"
+            },
+            "externalId": "airbase_id"
+        }
+    }
+}
