@@ -523,8 +523,8 @@ class VendorsSink(FallbackSink):
                         merged = dict(payload.get("address") or {})
                         merged.update({k: v for k, v in value.items() if v not in (None, "")})
                         payload["address"] = merged
-                else:
-                    payload[field] = value
+                    else:
+                        payload[field] = value
 
         # validate address
         payload = self._validate_vendor_address(payload, existing_vendor)
