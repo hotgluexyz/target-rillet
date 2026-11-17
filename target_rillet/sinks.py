@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import requests
 from hotglue_singer_sdk.exceptions import FatalAPIError
 
@@ -512,19 +514,20 @@ class VendorsSink(FallbackSink):
         record = super().preprocess_record(record, context)
         # lookup vendor by name to not create duplicates
         existing_vendor = self._resolve_vendor(record, full_object=True)
-        payload = existing_vendor.copy() if existing_vendor else record
+        payload = deepcopy(existing_vendor) if existing_vendor else record
 
-        # merge incoming record with existing vendor record, updating address nested fields if they are present in the incoming record
         if existing_vendor:
             for field, value in record.items():
-                if field not in self._read_only_fields and value not in [None, ""]:
-                    # update address nested fields if they are present in the incoming record
-                    if field == "address" and existing_vendor.get("address") and value:
-                        payload["address"].update(value)
+                if field not in self._read_only_fields and value not in (None, ""):
+                    if field == "address":
+                        merged = dict(payload.get("address") or {})
+                        merged.update({k: v for k, v in value.items() if v not in (None, "")})
+                        payload["address"] = merged
+                else:
                     payload[field] = value
 
         # validate address
-        payload = self._validate_vendor_address(record, existing_vendor)
+        payload = self._validate_vendor_address(payload, existing_vendor)
         return payload
 
     def upsert_record(self, record: dict, context: dict):
