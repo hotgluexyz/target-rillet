@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import requests
 from hotglue_singer_sdk.exceptions import FatalAPIError
 
@@ -461,13 +463,71 @@ class VendorsSink(FallbackSink):
     allows_upserts = True
     _read_only_fields = ("created_at", "updated_at")
 
+    _VENDOR_ADDRESS_REQUIRED = ("line1", "city", "zip_code", "country")
+
+    def _vendor_address_missing_fields(self, address: dict | None) -> list[str]:
+        if not address:
+            return []
+        return [field for field in self._VENDOR_ADDRESS_REQUIRED if not address.get(field)]
+
+    def _validate_vendor_address(
+        self,
+        payload: dict,
+        existing_vendor: dict | None,
+    ) -> dict:
+        """Drop, keep, or reject address on the upsert payload."""
+        vendor_label = payload.get("name")
+        vendor_id = payload.get("id")
+
+        # for new vendors, drop address if it is incomplete
+        if not existing_vendor:
+            if self._vendor_address_missing_fields(payload.get("address")):
+                self.logger.info(
+                    f"Vendor {vendor_label!r}: incoming address is incomplete. "
+                    f"Dropping address for new vendor."
+                )
+                payload.pop("address", None)
+            return payload
+
+        # for existing vendors, check if the existing address is incomplete and if the incoming payload address is incomplete
+        existing_address = existing_vendor.get("address")
+        existing_missing = self._vendor_address_missing_fields(existing_address)
+        payload_address = payload.get("address")
+        payload_missing = self._vendor_address_missing_fields(payload.get("address"))
+
+        # If address in Rillet is incomplete, and incoming payload address won't fix it, raise an error.
+        if existing_address and existing_missing and (payload_missing or not payload_address):
+            missing = ", ".join(existing_missing)
+            raise ValueError(
+                f"Vendor {vendor_label!r} (id {vendor_id}) has an incomplete "
+                f"address in Rillet (missing: {missing}). Fix the address in Rillet before syncing updates."
+            )
+
+        # If no address in Rillet, and incoming payload address is incomplete, drop it.
+        if not existing_address and payload_missing:
+            self.logger.info(f"Vendor {vendor_label!r}: incoming address is incomplete. Dropping address; updating other fields.")
+            payload.pop("address", None)
+
+        return payload
+
     def preprocess_record(self, record: dict, context: dict) -> dict:
         record = super().preprocess_record(record, context)
         # lookup vendor by name to not create duplicates
         existing_vendor = self._resolve_vendor(record, full_object=True)
-        payload = existing_vendor.copy() if existing_vendor else record
+        payload = deepcopy(existing_vendor) if existing_vendor else record
+
         if existing_vendor:
-            payload.update({k:v for k,v in record.items() if k not in self._read_only_fields and v not in [None, ""]})
+            for field, value in record.items():
+                if field not in self._read_only_fields and value not in (None, ""):
+                    if field == "address":
+                        merged = dict(payload.get("address") or {})
+                        merged.update({k: v for k, v in value.items() if v not in (None, "")})
+                        payload["address"] = merged
+                    else:
+                        payload[field] = value
+
+        # validate address
+        payload = self._validate_vendor_address(payload, existing_vendor)
         return payload
 
     def upsert_record(self, record: dict, context: dict):
