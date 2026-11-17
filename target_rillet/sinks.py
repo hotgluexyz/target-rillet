@@ -461,6 +461,25 @@ class VendorsSink(FallbackSink):
     allows_upserts = True
     _read_only_fields = ("created_at", "updated_at")
 
+    def clean_vendor_address(self, record: dict) -> dict:
+        """Clean vendor address for updates."""
+        address = record.get("address")
+        id = record.get("id")
+        required_fields = ["line1", "city", "zip_code", "country"]
+        if not id and not all(address.get(field) for field in required_fields):
+            self.logger.info(f"Vendor address is incomplete for new vendor {record.get('name')}. Dropping address.")
+            record.pop("address")
+            return record
+        else:
+            # confirm required fields are present, if not add a placeholder
+            for field in required_fields:
+                if not address.get(field):
+                    if field == "country":
+                        address[field] = "USA"
+                    else:
+                        address[field] = "N/A"
+            return record
+
     def preprocess_record(self, record: dict, context: dict) -> dict:
         record = super().preprocess_record(record, context)
         # lookup vendor by name to not create duplicates
@@ -468,6 +487,8 @@ class VendorsSink(FallbackSink):
         payload = existing_vendor.copy() if existing_vendor else record
         if existing_vendor:
             payload.update({k:v for k,v in record.items() if k not in self._read_only_fields and v not in [None, ""]})
+        # make sure vendor address is complete for updates, drop it for new records
+        payload = self.clean_vendor_address(payload)
         return payload
 
     def upsert_record(self, record: dict, context: dict):
