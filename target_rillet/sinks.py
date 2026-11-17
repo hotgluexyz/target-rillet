@@ -487,7 +487,7 @@ class VendorsSink(FallbackSink):
                 payload.pop("address", None)
             return payload
 
-        # for existing vendors, check if the existing address is complete and if the incoming payload address is incomplete
+        # for existing vendors, check if the existing address is incomplete and if the incoming payload address is incomplete
         existing_address = existing_vendor.get("address")
         existing_missing = self._vendor_address_missing_fields(existing_address)
         payload_address = payload.get("address")
