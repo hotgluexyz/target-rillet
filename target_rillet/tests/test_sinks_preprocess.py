@@ -292,6 +292,21 @@ class TestBillsSinkPreprocessRecord:
         )
         assert payload["items"][0]["account_code"] == "6300"
 
+    def test_passes_through_external_references(self):
+        sink = make_sink(BillsSink, "Bills", lookup_cache=LOOKUP_CACHE)
+        refs = [{"type": "pivot", "id": "inv-1", "url": "https://app.example/inv-1"}]
+        payload = sink.preprocess_record(
+            {
+                "vendorId": "vendor-1",
+                "billNumber": "BILL-102",
+                "currency": "USD",
+                "external_references": refs,
+                "expenses": [{"accountNumber": "6100", "amount": "10"}],
+            },
+            {},
+        )
+        assert payload["external_references"] == refs
+
 
 class TestFallbackSinkPreprocessRecord:
     def test_preserves_existing_subsidiary_id(self):

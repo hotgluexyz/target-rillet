@@ -134,6 +134,9 @@ class BillsSink(RilletSink):
             custom_fields = {field["name"]: field["value"] for field in record.get("customFields")}
             payload.update(custom_fields)
 
+        if record.get("external_references"):
+            payload["external_references"] = record["external_references"]
+
         expenses = []
         all_lines = record.get("expenses", []) + (record.get("lineItems", []))
         for expense in all_lines:
