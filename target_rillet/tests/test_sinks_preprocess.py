@@ -56,6 +56,18 @@ LOOKUP_CACHE = {
             ],
         },
     },
+    "tax_rates": {
+        "ZERO": {
+            "percentage": "0",
+            "country": "US",
+            "description": "Zero tax",
+        },
+        "VAT20": {
+            "percentage": "20",
+            "country": "GB",
+            "description": "VAT 20%",
+        },
+    },
 }
 
 
@@ -306,6 +318,44 @@ class TestBillsSinkPreprocessRecord:
             {},
         )
         assert payload["external_references"] == refs
+
+    def test_accepts_zero_tax_amount(self):
+        sink = make_sink(BillsSink, "Bills", lookup_cache=LOOKUP_CACHE)
+        payload = sink.preprocess_record(
+            {
+                "vendorId": "vendor-1",
+                "currency": "USD",
+                "expenses": [
+                    {
+                        "accountNumber": "6100",
+                        "amount": "10",
+                        "taxCode": "ZERO",
+                        "taxAmount": 0,
+                    }
+                ],
+            },
+            {},
+        )
+        assert payload["items"][0]["tax_rate"]["tax_amount"]["amount"] == 0
+        assert payload["items"][0]["tax_rate"]["tax_code"] == "ZERO"
+
+    def test_raises_when_tax_code_without_tax_amount(self):
+        sink = make_sink(BillsSink, "Bills", lookup_cache=LOOKUP_CACHE)
+        with pytest.raises(ValueError, match="taxAmount is required"):
+            sink.preprocess_record(
+                {
+                    "vendorId": "vendor-1",
+                    "currency": "USD",
+                    "expenses": [
+                        {
+                            "accountNumber": "6100",
+                            "amount": "10",
+                            "taxCode": "VAT20",
+                        }
+                    ],
+                },
+                {},
+            )
 
 
 class TestFallbackSinkPreprocessRecord:
