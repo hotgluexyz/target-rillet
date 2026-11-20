@@ -675,6 +675,9 @@ class BankAccountsSink(FallbackSink):
             )
             if currency:
                 record["currency"] = currency
+                name = (record.get("name") or "").strip()
+                if name and not name.endswith(f" {currency}"):
+                    record["name"] = f"{name} {currency}"
 
         # If Rillet already has a cash account mapped to this GL account_code, reuse it
         # (allows_upserts=False will skip POST instead of creating a new account).

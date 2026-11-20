@@ -573,6 +573,7 @@ class TestBankAccountsSinkPreprocessRecord:
             {},
         )
         assert payload["currency"] == "CAD"
+        assert payload["name"] == "Navan Card CAD"
         assert payload["subsidiary_id"] == "sub-cad"
 
 
