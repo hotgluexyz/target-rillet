@@ -4,6 +4,8 @@ from hotglue_singer_sdk import typing as th
 from hotglue_singer_sdk.target_sdk.target import TargetHotglue
 from typing import Type
 from hotglue_singer_sdk.sinks import Sink
+from target_rillet.ar_sinks import CustomersSink, ProductsSink
+from target_rillet.financial_sinks import ContractsSink, ContractAmendmentsSink, InvoicesSink
 from target_rillet.sinks import (
     JournalsSink,
     FallbackSink,
@@ -56,6 +58,11 @@ class TargetRillet(TargetHotglue):
     ).to_dict()
 
     SINK_TYPES = [
+        CustomersSink,
+        ProductsSink,
+        ContractsSink,
+        ContractAmendmentsSink,
+        InvoicesSink,
         JournalsSink,
         BillsSink,
         ChargesSink,
