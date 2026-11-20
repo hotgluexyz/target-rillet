@@ -515,6 +515,51 @@ class TestBankTransactionsSinkPreprocessRecord:
         assert state_updates == {"existing": True}
         assert called == []
 
+    def test_upsert_skips_when_exchange_rate_pair_unsupported(self, monkeypatch):
+        sink = make_sink(
+            BankTransactionsSink, "bank-transactions", lookup_cache=LOOKUP_CACHE
+        )
+        sink._lookup_cache = {
+            **LOOKUP_CACHE,
+            "bank-accounts": [
+                {
+                    "id": "ba-gbp",
+                    "account_code": "21140",
+                    "currency": "GBP",
+                    "subsidiary_id": "sub-uk",
+                }
+            ],
+        }
+        sink._target._charge_exchange_rates = {
+            "ext-fx": {
+                "base": "EUR",
+                "target": "CAD",
+                "rate": "1.5",
+                "date": "2026-09-24",
+            }
+        }
+        called = []
+
+        def fail_if_called(*args, **kwargs):
+            called.append(True)
+            raise AssertionError("should not POST bank-transaction")
+
+        monkeypatch.setattr(FallbackSink, "upsert_record", fail_if_called)
+
+        record_id, success, state_updates = sink.upsert_record(
+            {
+                "bank_account_id": "ba-gbp",
+                "net_amount": {"amount": -100.0, "currency": "USD"},
+                "external_references": [{"type": "Navan-Hotglue", "id": "ext-fx"}],
+            },
+            {},
+        )
+
+        assert record_id is None
+        assert success is True
+        assert state_updates == {"existing": True}
+        assert called == []
+
     def test_upsert_same_currency_is_noop(self, monkeypatch):
         sink = make_sink(
             BankTransactionsSink, "bank-transactions", lookup_cache=LOOKUP_CACHE

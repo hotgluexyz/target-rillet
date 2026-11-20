@@ -126,7 +126,7 @@ class RilletSink(HotglueSink):
                 items = [item for item in items if item.get(cfg["key"]) is not None]
             self._lookup_cache[lookup_name] = {item[cfg["key"]]: item[cfg["value"]] for item in items}
             if lookup_name == "subsidiaries":
-                # Side cache for bank currency stamping (trade_name→id stays primary)
+                # Cache subsidiary -> to bank currency 
                 self._lookup_cache["subsidiaries_currency_by_id"] = {
                     item["id"]: item.get("currency")
                     for item in items
@@ -194,6 +194,7 @@ class RilletSink(HotglueSink):
         response = self.request_api(method, endpoint=endpoint, request_data=record)
         payload = response.json()
         # Sinks (e.g. ChargesSink) may read response fields like exchange_rate.
+        # So we store the response
         self._last_upsert_response = payload
         return payload.get("id"), True, state_updates
 

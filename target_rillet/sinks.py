@@ -277,20 +277,22 @@ class BankTransactionsSink(FallbackSink):
 
     def _bank_currency_for_record(self, record: dict) -> str | None:
         """Resolve the bank account currency (cache), else subsidiary currency."""
-        bank_id = record.get("bank_account_id")
-        if bank_id:
+        current_bank_id = record.get("bank_account_id")
+        if current_bank_id:
             cache = self._lookup_cache.get("bank-accounts")
             if not isinstance(cache, list):
                 self._refresh_lookup_cache("bank-accounts")
                 cache = self._lookup_cache.get("bank-accounts") or []
-            for item in cache:
-                if item.get("id") == bank_id and item.get("currency"):
-                    return item["currency"]
+            for bank_account_cache in cache:
+                if bank_account_cache.get("id") == current_bank_id and \
+                bank_account_cache.get("currency"):
+                    return bank_account_cache["currency"]
 
         subsidiary_id = record.get("subsidiary_id")
         if subsidiary_id:
             if "subsidiaries_currency_by_id" not in self._lookup_cache:
                 self._refresh_lookup_cache("subsidiaries")
+            # Get the subsidiary's currency 
             return self._lookup_cache.get("subsidiaries_currency_by_id", {}).get(
                 subsidiary_id
             )
@@ -301,8 +303,7 @@ class BankTransactionsSink(FallbackSink):
     ) -> bool:
         """Convert net_amount to bank currency using per-job charge FX cache.
 
-        Returns False when conversion is required but no rate is available
-        (caller should skip the bank transaction).
+        Returns False when conversion is required but no rate is available.
         """
         net_amount_transaction = record.get("net_amount")
 
@@ -317,17 +318,13 @@ class BankTransactionsSink(FallbackSink):
             return False
 
         rate = float(exchange_rate["rate"])
-        base = exchange_rate.get("base")
-        target = exchange_rate.get("target")
+        base_currency = exchange_rate.get("base")
+        target_currency = exchange_rate.get("target")
         amount = float(net_amount_transaction["amount"])
-        if base == bt_currency and target == bank_subsidary_currency:
-            converted = amount * rate
-        elif base == bank_subsidary_currency and target == bt_currency:
-            converted = amount / rate
-        else:
-            converted = amount * rate
+        if base_currency != bt_currency or target_currency != bank_subsidary_currency:
+            return False
 
-        net_amount_transaction["amount"] = round(converted, 2)
+        net_amount_transaction["amount"] = round(amount * rate, 2)
         net_amount_transaction["currency"] = bank_subsidary_currency
         return True
 
@@ -384,7 +381,8 @@ class ChargesSink(FallbackSink):
         return record
 
     def _stash_charge_exchange_rate(self, record: dict, exchange_rate) -> None:
-        """Store POST exchange_rate on the target for same-job bank txn conversion."""
+        """Store the exchange_rate returned by Rilleton the target
+         for same-job bank txn conversion."""
         if exchange_rate is None:
             return
         refs = record.get("external_references") or []
