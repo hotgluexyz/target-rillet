@@ -8,6 +8,7 @@ import pytest
 
 from target_rillet.client import RilletSink
 from target_rillet.sinks import (
+    BankAccountsSink,
     BankTransactionsSink,
     BillsSink,
     ChargesSink,
@@ -429,6 +430,232 @@ class TestBankTransactionsSinkPreprocessRecord:
         assert success is True
         assert state_updates == {"existing": True}
         assert called == []
+
+    def test_upsert_converts_net_amount_with_cached_exchange_rate(self, monkeypatch):
+        sink = make_sink(
+            BankTransactionsSink, "bank-transactions", lookup_cache=LOOKUP_CACHE
+        )
+        sink._lookup_cache = {
+            **LOOKUP_CACHE,
+            "bank-accounts": [
+                {
+                    "id": "ba-gbp",
+                    "account_code": "21140",
+                    "currency": "GBP",
+                    "subsidiary_id": "sub-uk",
+                }
+            ],
+        }
+        sink._target._charge_exchange_rates = {
+            "ext-fx": {
+                "base": "USD",
+                "target": "GBP",
+                "rate": "0.75",
+                "date": "2026-09-24",
+            }
+        }
+        captured = {}
+
+        def fake_upsert(self, record, context):
+            captured["record"] = record
+            return "bt-1", True, {}
+
+        monkeypatch.setattr(FallbackSink, "upsert_record", fake_upsert)
+
+        record_id, success, _ = sink.upsert_record(
+            {
+                "bank_account_id": "ba-gbp",
+                "net_amount": {"amount": -100.0, "currency": "USD"},
+                "external_references": [{"type": "Navan-Hotglue", "id": "ext-fx"}],
+            },
+            {},
+        )
+
+        assert record_id == "bt-1"
+        assert success is True
+        assert captured["record"]["net_amount"] == {
+            "amount": -75.0,
+            "currency": "GBP",
+        }
+
+    def test_upsert_skips_when_exchange_rate_missing(self, monkeypatch):
+        sink = make_sink(
+            BankTransactionsSink, "bank-transactions", lookup_cache=LOOKUP_CACHE
+        )
+        sink._lookup_cache = {
+            **LOOKUP_CACHE,
+            "bank-accounts": [
+                {
+                    "id": "ba-gbp",
+                    "account_code": "21140",
+                    "currency": "GBP",
+                    "subsidiary_id": "sub-uk",
+                }
+            ],
+        }
+        called = []
+
+        def fail_if_called(*args, **kwargs):
+            called.append(True)
+            raise AssertionError("should not POST bank-transaction")
+
+        monkeypatch.setattr(FallbackSink, "upsert_record", fail_if_called)
+
+        record_id, success, state_updates = sink.upsert_record(
+            {
+                "bank_account_id": "ba-gbp",
+                "net_amount": {"amount": -100.0, "currency": "USD"},
+                "external_references": [{"type": "Navan-Hotglue", "id": "ext-no-rate"}],
+            },
+            {},
+        )
+
+        assert record_id is None
+        assert success is True
+        assert state_updates == {"existing": True}
+        assert called == []
+
+    def test_upsert_skips_when_exchange_rate_pair_unsupported(self, monkeypatch):
+        sink = make_sink(
+            BankTransactionsSink, "bank-transactions", lookup_cache=LOOKUP_CACHE
+        )
+        sink._lookup_cache = {
+            **LOOKUP_CACHE,
+            "bank-accounts": [
+                {
+                    "id": "ba-gbp",
+                    "account_code": "21140",
+                    "currency": "GBP",
+                    "subsidiary_id": "sub-uk",
+                }
+            ],
+        }
+        sink._target._charge_exchange_rates = {
+            "ext-fx": {
+                "base": "EUR",
+                "target": "CAD",
+                "rate": "1.5",
+                "date": "2026-09-24",
+            }
+        }
+        called = []
+
+        def fail_if_called(*args, **kwargs):
+            called.append(True)
+            raise AssertionError("should not POST bank-transaction")
+
+        monkeypatch.setattr(FallbackSink, "upsert_record", fail_if_called)
+
+        record_id, success, state_updates = sink.upsert_record(
+            {
+                "bank_account_id": "ba-gbp",
+                "net_amount": {"amount": -100.0, "currency": "USD"},
+                "external_references": [{"type": "Navan-Hotglue", "id": "ext-fx"}],
+            },
+            {},
+        )
+
+        assert record_id is None
+        assert success is True
+        assert state_updates == {"existing": True}
+        assert called == []
+
+    def test_upsert_same_currency_is_noop(self, monkeypatch):
+        sink = make_sink(
+            BankTransactionsSink, "bank-transactions", lookup_cache=LOOKUP_CACHE
+        )
+        sink._lookup_cache = {
+            **LOOKUP_CACHE,
+            "bank-accounts": [
+                {
+                    "id": "ba-usd",
+                    "account_code": "21140",
+                    "currency": "USD",
+                    "subsidiary_id": "sub-us",
+                }
+            ],
+        }
+        captured = {}
+
+        def fake_upsert(self, record, context):
+            captured["record"] = record
+            return "bt-1", True, {}
+
+        monkeypatch.setattr(FallbackSink, "upsert_record", fake_upsert)
+
+        sink.upsert_record(
+            {
+                "bank_account_id": "ba-usd",
+                "net_amount": {"amount": -50.0, "currency": "USD"},
+                "external_references": [{"type": "Navan-Hotglue", "id": "ext-same"}],
+            },
+            {},
+        )
+
+        assert captured["record"]["net_amount"] == {
+            "amount": -50.0,
+            "currency": "USD",
+        }
+
+
+class TestBankAccountsSinkPreprocessRecord:
+    def test_stamps_currency_from_subsidiary_cache(self):
+        sink = make_sink(
+            BankAccountsSink,
+            "bank-accounts",
+            lookup_cache={
+                **LOOKUP_CACHE,
+                "subsidiaries_currency_by_id": {"sub-cad": "CAD"},
+                "bank-accounts": [],
+            },
+        )
+        payload = sink.preprocess_record(
+            {
+                "account_code": "21140",
+                "subsidiaryId": "sub-cad",
+                "name": "Navan Card",
+            },
+            {},
+        )
+        assert payload["currency"] == "CAD"
+        assert payload["name"] == "Navan Card CAD"
+        assert payload["subsidiary_id"] == "sub-cad"
+
+
+class TestChargesSinkExchangeRateCache:
+    def test_upsert_stashes_exchange_rate_on_target(self, monkeypatch):
+        sink = make_sink(ChargesSink, "charges", lookup_cache=LOOKUP_CACHE)
+
+        class FakeResponse:
+            def json(self):
+                return {
+                    "id": "ch-1",
+                    "exchange_rate": {
+                        "base": "USD",
+                        "target": "GBP",
+                        "rate": "0.75",
+                    },
+                }
+
+        monkeypatch.setattr(
+            sink,
+            "request_api",
+            lambda *args, **kwargs: FakeResponse(),
+        )
+
+        record_id, success, _ = sink.upsert_record(
+            {
+                "vendor_id": "vendor-1",
+                "subsidiary_id": "sub-uk",
+                "items": [],
+                "external_references": [{"type": "Navan-Hotglue", "id": "navan-1"}],
+            },
+            {},
+        )
+
+        assert record_id == "ch-1"
+        assert success is True
+        assert sink._target._charge_exchange_rates["navan-1"]["rate"] == "0.75"
 
 
 class TestChargesSinkPreprocessRecord:

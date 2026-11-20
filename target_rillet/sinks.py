@@ -274,7 +274,60 @@ class BankTransactionsSink(FallbackSink):
             "objectName": "bank-accounts",
         },
     ]
-    
+
+    def _bank_currency_for_record(self, record: dict) -> str | None:
+        """Resolve the bank account currency (cache), else subsidiary currency."""
+        current_bank_id = record.get("bank_account_id")
+        if current_bank_id:
+            cache = self._lookup_cache.get("bank-accounts")
+            if not isinstance(cache, list):
+                self._refresh_lookup_cache("bank-accounts")
+                cache = self._lookup_cache.get("bank-accounts") or []
+            for bank_account_cache in cache:
+                if bank_account_cache.get("id") == current_bank_id and \
+                bank_account_cache.get("currency"):
+                    return bank_account_cache["currency"]
+
+        subsidiary_id = record.get("subsidiary_id")
+        if subsidiary_id:
+            if "subsidiaries_currency_by_id" not in self._lookup_cache:
+                self._refresh_lookup_cache("subsidiaries")
+            # Get the subsidiary's currency 
+            return self._lookup_cache.get("subsidiaries_currency_by_id", {}).get(
+                subsidiary_id
+            )
+        return None
+
+    def _apply_charge_exchange_rate(
+        self, record: dict, external_id: str | None
+    ) -> bool:
+        """Convert net_amount to bank currency using per-job charge FX cache.
+
+        Returns False when conversion is required but no rate is available.
+        """
+        net_amount_transaction = record.get("net_amount")
+
+        bt_currency = net_amount_transaction.get("currency")
+        bank_subsidary_currency = self._bank_currency_for_record(record)
+        if not bt_currency or not bank_subsidary_currency or bt_currency == bank_subsidary_currency:
+            return True
+
+        rates = getattr(self._target, "_charge_exchange_rates", None) or {}
+        exchange_rate = rates.get(str(external_id)) if external_id else None
+        if not exchange_rate:
+            return False
+
+        rate = float(exchange_rate["rate"])
+        base_currency = exchange_rate.get("base")
+        target_currency = exchange_rate.get("target")
+        amount = float(net_amount_transaction["amount"])
+        if base_currency != bt_currency or target_currency != bank_subsidary_currency:
+            return False
+
+        net_amount_transaction["amount"] = round(amount * rate, 2)
+        net_amount_transaction["currency"] = bank_subsidary_currency
+        return True
+
     def upsert_record(self, record: dict, context: dict):
         # externalId is popped before upsert; ETL pairs ledger/BT via external_references.id
         refs = record.get("external_references") or []
@@ -282,6 +335,13 @@ class BankTransactionsSink(FallbackSink):
         if self._failed_matched_record_for_external_id(external_id):
             self.logger.info(
                 "Skipping bank-transaction %s because matching record failed",
+                external_id,
+            )
+            return None, True, {"existing": True}
+        if not self._apply_charge_exchange_rate(record, external_id):
+            self.logger.info(
+                "Skipping bank-transaction %s because exchange rate missing "
+                "for currency conversion",
                 external_id,
             )
             return None, True, {"existing": True}
@@ -320,10 +380,40 @@ class ChargesSink(FallbackSink):
         record["items"] = self.process_prepaid_lines(record.get("items"))
         return record
 
+    def _stash_charge_exchange_rate(self, record: dict, exchange_rate) -> None:
+        """Store the exchange_rate returned by Rilleton the target
+         for same-job bank txn conversion."""
+        if exchange_rate is None:
+            return
+        refs = record.get("external_references") or []
+        external_id = record.get("externalId")
+        if not external_id and refs and isinstance(refs[0], dict):
+            external_id = refs[0].get("id")
+        if not external_id:
+            return
+        rates = getattr(self._target, "_charge_exchange_rates", None)
+        if rates is None:
+            rates = {}
+            self._target._charge_exchange_rates = rates
+        rates[str(external_id)] = exchange_rate
+
     def upsert_record(self, record: dict, context: dict):
         """Create a charge in Rillet, then upload any attachments."""
         attachments = record.pop("attachments", [])
+        # externalId may still be present; keep a copy for FX cache key
+        external_id = record.get("externalId")
+        refs = record.get("external_references") or []
+        if not external_id and refs and isinstance(refs[0], dict):
+            external_id = refs[0].get("id")
+
         id, success, state_updates = super().upsert_record(record, context)
+
+        if success and not state_updates.get("existing"):
+            payload = getattr(self, "_last_upsert_response", None) or {}
+            self._stash_charge_exchange_rate(
+                {"externalId": external_id, "external_references": refs},
+                payload.get("exchange_rate"),
+            )
 
         try:
             if id and attachments:
@@ -574,6 +664,19 @@ class BankAccountsSink(FallbackSink):
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
         record = super().preprocess_record(record, context)
+        # Stamp currency from subsidiary when ETL omits it (one bank per sub).
+        if not record.get("currency") and record.get("subsidiary_id"):
+            if "subsidiaries_currency_by_id" not in self._lookup_cache:
+                self._refresh_lookup_cache("subsidiaries")
+            currency = self._lookup_cache.get("subsidiaries_currency_by_id", {}).get(
+                record["subsidiary_id"]
+            )
+            if currency:
+                record["currency"] = currency
+                name = (record.get("name") or "").strip()
+                if name and not name.endswith(f" {currency}"):
+                    record["name"] = f"{name} {currency}"
+
         # If Rillet already has a cash account mapped to this GL account_code, reuse it
         # (allows_upserts=False will skip POST instead of creating a new account).
 
