@@ -125,6 +125,13 @@ class RilletSink(HotglueSink):
                 # Don't include bank accounts not mapped to a GL account
                 items = [item for item in items if item.get(cfg["key"]) is not None]
             self._lookup_cache[lookup_name] = {item[cfg["key"]]: item[cfg["value"]] for item in items}
+            if lookup_name == "subsidiaries":
+                # Side cache for bank currency stamping (trade_name→id stays primary)
+                self._lookup_cache["subsidiaries_currency_by_id"] = {
+                    item["id"]: item.get("currency")
+                    for item in items
+                    if item.get("id")
+                }
             if lookup_name == "accounts":
                 self._lookup_cache[f"{lookup_name}_by_id"] = {item["id"]: item[cfg["value"]] for item in items}
                 # also store all accounts of type expense that are tied to a prepaid account
@@ -185,7 +192,10 @@ class RilletSink(HotglueSink):
             return record.get("id"), True, {"existing": True}
 
         response = self.request_api(method, endpoint=endpoint, request_data=record)
-        return response.json().get("id"), True, state_updates
+        payload = response.json()
+        # Sinks (e.g. ChargesSink) may read response fields like exchange_rate.
+        self._last_upsert_response = payload
+        return payload.get("id"), True, state_updates
 
     def _resolve_subsidiary(self, record: dict) -> str:
         """Resolve subsidiary ID from direct ID or cached name lookup."""
