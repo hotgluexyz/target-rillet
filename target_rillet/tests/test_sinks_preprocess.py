@@ -426,8 +426,8 @@ class TestBankTransactionsSinkPreprocessRecord:
         )
 
         assert record_id is None
-        assert success is True
-        assert state_updates == {"existing": True}
+        assert success is False
+        assert state_updates == {}
         assert called == []
 
     def test_upsert_converts_net_amount_when_flagged(self, monkeypatch):

@@ -320,7 +320,7 @@ class BankTransactionsSink(FallbackSink):
                 "Skipping bank-transaction %s because matching record failed",
                 external_id,
             )
-            return None, True, {"existing": True}
+            return None, False, {}
         self._apply_charge_exchange_rate(record, external_id)
         try:
             return super().upsert_record(record, context)
