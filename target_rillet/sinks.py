@@ -274,7 +274,43 @@ class BankTransactionsSink(FallbackSink):
             "objectName": "bank-accounts",
         },
     ]
-    
+
+    def _apply_charge_exchange_rate(
+        self, record: dict, external_id: str | None
+    ) -> None:
+        """Convert net_amount using per-job charge FX cache when ETL flags the BT.
+
+        ETL sets process_transaction_exchange_rate when posted currency differs
+        from the subsidiary/bank currency. Raises when the flag is set but no
+        usable rate is available.
+        """
+        if not record.pop("process_transaction_exchange_rate", None):
+            return
+
+        net_amount_transaction = record.get("net_amount") or {}
+        bt_currency = net_amount_transaction.get("currency")
+        rates = getattr(self._target, "_charge_exchange_rates", None) or {}
+        exchange_rate = rates.get(str(external_id)) if external_id else None
+        if not exchange_rate:
+            raise ValueError(
+                f"Bank transaction {external_id} requires exchange rate conversion "
+                "but no charge exchange_rate was cached in this job"
+            )
+
+        rate = float(exchange_rate["rate"])
+        base_currency = exchange_rate.get("base")
+        target_currency = exchange_rate.get("target")
+        if not bt_currency or base_currency != bt_currency or not target_currency:
+            raise ValueError(
+                f"Bank transaction {external_id} exchange rate "
+                f"{base_currency}->{target_currency} does not match "
+                f"net_amount currency {bt_currency}"
+            )
+
+        amount = float(net_amount_transaction["amount"])
+        net_amount_transaction["amount"] = round(amount * rate, 2)
+        net_amount_transaction["currency"] = target_currency
+
     def upsert_record(self, record: dict, context: dict):
         # externalId is popped before upsert; ETL pairs ledger/BT via external_references.id
         refs = record.get("external_references") or []
@@ -284,7 +320,8 @@ class BankTransactionsSink(FallbackSink):
                 "Skipping bank-transaction %s because matching record failed",
                 external_id,
             )
-            return None, True, {"existing": True}
+            return None, False, {}
+        self._apply_charge_exchange_rate(record, external_id)
         try:
             return super().upsert_record(record, context)
         except Exception as e:
@@ -320,10 +357,40 @@ class ChargesSink(FallbackSink):
         record["items"] = self.process_prepaid_lines(record.get("items"))
         return record
 
+    def _stash_charge_exchange_rate(self, record: dict, exchange_rate) -> None:
+        """Store the exchange_rate returned by Rilleton the target
+         for same-job bank txn conversion."""
+        if exchange_rate is None:
+            return
+        refs = record.get("external_references") or []
+        external_id = record.get("externalId")
+        if not external_id and refs and isinstance(refs[0], dict):
+            external_id = refs[0].get("id")
+        if not external_id:
+            return
+        rates = getattr(self._target, "_charge_exchange_rates", None)
+        if rates is None:
+            rates = {}
+            self._target._charge_exchange_rates = rates
+        rates[str(external_id)] = exchange_rate
+
     def upsert_record(self, record: dict, context: dict):
         """Create a charge in Rillet, then upload any attachments."""
         attachments = record.pop("attachments", [])
+        # externalId may still be present; keep a copy for FX cache key
+        external_id = record.get("externalId")
+        refs = record.get("external_references") or []
+        if not external_id and refs and isinstance(refs[0], dict):
+            external_id = refs[0].get("id")
+
         id, success, state_updates = super().upsert_record(record, context)
+
+        if success and not state_updates.get("existing"):
+            payload = getattr(self, "_last_upsert_response", None) or {}
+            self._stash_charge_exchange_rate(
+                {"externalId": external_id, "external_references": refs},
+                payload.get("exchange_rate"),
+            )
 
         try:
             if id and attachments:

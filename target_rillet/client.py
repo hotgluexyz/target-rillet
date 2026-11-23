@@ -185,7 +185,11 @@ class RilletSink(HotglueSink):
             return record.get("id"), True, {"existing": True}
 
         response = self.request_api(method, endpoint=endpoint, request_data=record)
-        return response.json().get("id"), True, state_updates
+        payload = response.json()
+        # Sinks (e.g. ChargesSink) may read response fields like exchange_rate.
+        # So we store the response
+        self._last_upsert_response = payload
+        return payload.get("id"), True, state_updates
 
     def _resolve_subsidiary(self, record: dict) -> str:
         """Resolve subsidiary ID from direct ID or cached name lookup."""
