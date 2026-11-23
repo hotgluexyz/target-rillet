@@ -275,58 +275,41 @@ class BankTransactionsSink(FallbackSink):
         },
     ]
 
-    def _bank_currency_for_record(self, record: dict) -> str | None:
-        """Resolve the bank account currency (cache), else subsidiary currency."""
-        current_bank_id = record.get("bank_account_id")
-        if current_bank_id:
-            cache = self._lookup_cache.get("bank-accounts")
-            if not isinstance(cache, list):
-                self._refresh_lookup_cache("bank-accounts")
-                cache = self._lookup_cache.get("bank-accounts") or []
-            for bank_account_cache in cache:
-                if bank_account_cache.get("id") == current_bank_id and \
-                bank_account_cache.get("currency"):
-                    return bank_account_cache["currency"]
-
-        subsidiary_id = record.get("subsidiary_id")
-        if subsidiary_id:
-            if "subsidiaries_currency_by_id" not in self._lookup_cache:
-                self._refresh_lookup_cache("subsidiaries")
-            # Get the subsidiary's currency 
-            return self._lookup_cache.get("subsidiaries_currency_by_id", {}).get(
-                subsidiary_id
-            )
-        return None
-
     def _apply_charge_exchange_rate(
         self, record: dict, external_id: str | None
-    ) -> bool:
-        """Convert net_amount to bank currency using per-job charge FX cache.
+    ) -> None:
+        """Convert net_amount using per-job charge FX cache when ETL flags the BT.
 
-        Returns False when conversion is required but no rate is available.
+        ETL sets process_transaction_exchange_rate when posted currency differs
+        from the subsidiary/bank currency. Raises when the flag is set but no
+        usable rate is available.
         """
-        net_amount_transaction = record.get("net_amount")
+        if not record.pop("process_transaction_exchange_rate", None):
+            return
 
+        net_amount_transaction = record.get("net_amount") or {}
         bt_currency = net_amount_transaction.get("currency")
-        bank_subsidary_currency = self._bank_currency_for_record(record)
-        if not bt_currency or not bank_subsidary_currency or bt_currency == bank_subsidary_currency:
-            return True
-
         rates = getattr(self._target, "_charge_exchange_rates", None) or {}
         exchange_rate = rates.get(str(external_id)) if external_id else None
         if not exchange_rate:
-            return False
+            raise ValueError(
+                f"Bank transaction {external_id} requires exchange rate conversion "
+                "but no charge exchange_rate was cached in this job"
+            )
 
         rate = float(exchange_rate["rate"])
         base_currency = exchange_rate.get("base")
         target_currency = exchange_rate.get("target")
-        amount = float(net_amount_transaction["amount"])
-        if base_currency != bt_currency or target_currency != bank_subsidary_currency:
-            return False
+        if not bt_currency or base_currency != bt_currency or not target_currency:
+            raise ValueError(
+                f"Bank transaction {external_id} exchange rate "
+                f"{base_currency}->{target_currency} does not match "
+                f"net_amount currency {bt_currency}"
+            )
 
+        amount = float(net_amount_transaction["amount"])
         net_amount_transaction["amount"] = round(amount * rate, 2)
-        net_amount_transaction["currency"] = bank_subsidary_currency
-        return True
+        net_amount_transaction["currency"] = target_currency
 
     def upsert_record(self, record: dict, context: dict):
         # externalId is popped before upsert; ETL pairs ledger/BT via external_references.id
@@ -338,13 +321,7 @@ class BankTransactionsSink(FallbackSink):
                 external_id,
             )
             return None, True, {"existing": True}
-        if not self._apply_charge_exchange_rate(record, external_id):
-            self.logger.info(
-                "Skipping bank-transaction %s because exchange rate missing "
-                "for currency conversion",
-                external_id,
-            )
-            return None, True, {"existing": True}
+        self._apply_charge_exchange_rate(record, external_id)
         try:
             return super().upsert_record(record, context)
         except Exception as e:
@@ -664,19 +641,6 @@ class BankAccountsSink(FallbackSink):
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
         record = super().preprocess_record(record, context)
-        # Stamp currency from subsidiary when ETL omits it (one bank per sub).
-        if not record.get("currency") and record.get("subsidiary_id"):
-            if "subsidiaries_currency_by_id" not in self._lookup_cache:
-                self._refresh_lookup_cache("subsidiaries")
-            currency = self._lookup_cache.get("subsidiaries_currency_by_id", {}).get(
-                record["subsidiary_id"]
-            )
-            if currency:
-                record["currency"] = currency
-                name = (record.get("name") or "").strip()
-                if name and not name.endswith(f" {currency}"):
-                    record["name"] = f"{name} {currency}"
-
         # If Rillet already has a cash account mapped to this GL account_code, reuse it
         # (allows_upserts=False will skip POST instead of creating a new account).
 
