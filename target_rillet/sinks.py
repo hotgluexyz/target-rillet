@@ -268,6 +268,7 @@ class FallbackSink(RilletSink):
 
 class BankTransactionsSink(FallbackSink):
     name = "bank-transactions"
+    api_version = "4"
     relation_fields = [
         {
             "field": "bank_account_id",
@@ -453,6 +454,7 @@ class ReconcileTransactionsSink(FallbackSink):
         """
         # Synthetic snapshot key only — not part of the Rillet match body.
         record_id = record.pop("id", None)
+        record.pop("externalId", None)
 
         if self._failed_matched_record_for_external_id(record_id):
             self.logger.info(
@@ -479,6 +481,7 @@ class ReconcileTransactionsSink(FallbackSink):
 
 class ReimbursementsSink(FallbackSink):
     name = "reimbursements"
+    api_version = "4"
     allows_upserts = False
     lookup_vendor = True
     supports_line_prepayments = True
@@ -492,7 +495,13 @@ class ReimbursementsSink(FallbackSink):
     ]
 
     def preprocess_record(self, record: dict, context: dict) -> dict:
-        """Resolve line custom fields to Rillet IDs."""
+        """Resolve reimbursement line accounts and custom fields."""
+        for item in record.get("items", []):
+            if item.get("accountId") or item.get("accountName"):
+                item["account_code"] = self._resolve_account(item)
+                item.pop("accountId", None)
+                item.pop("accountName", None)
+
         record = super().preprocess_record(record, context)
         for item in record.get("items", []):
             if item.get("fields"):
