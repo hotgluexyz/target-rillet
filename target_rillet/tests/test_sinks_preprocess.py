@@ -701,7 +701,8 @@ class TestReconcileTransactionsSink:
                     {"externalId": "ext-charge", "id": "ch-uuid-1", "success": True},
                 ],
                 "reimbursements": [
-                    {"externalId": "ext-reimb", "id": "re-uuid-1", "success": True},
+                    {"externalId": "report-1__claim-1", "id": "re-uuid-1", "success": True},
+                    {"externalId": "report-1__claim-2", "id": "re-uuid-2", "success": True},
                 ],
                 "Bills": [
                     {"externalId": "ext-bill", "id": "bill-uuid-1", "success": True},
@@ -714,7 +715,7 @@ class TestReconcileTransactionsSink:
             {
                 "transaction_ids": ["ext-txn"],
                 "charge_ids": ["ext-charge"],
-                "reimbursement_ids": ["ext-reimb"],
+                "reimbursement_ids": ["report-1__claim-1", "report-1__claim-2"],
                 "bill_ids": ["ext-bill"],
             },
             sink.relation_fields,
@@ -723,7 +724,7 @@ class TestReconcileTransactionsSink:
         assert payload == {
             "transaction_ids": ["bt-uuid-1"],
             "charge_ids": ["ch-uuid-1"],
-            "reimbursement_ids": ["re-uuid-1"],
+            "reimbursement_ids": ["re-uuid-1", "re-uuid-2"],
             "bill_ids": ["bill-uuid-1"],
         }
 
@@ -778,6 +779,7 @@ class TestReconcileTransactionsSink:
 
         payload = {
             "id": "navan-txn-1",
+            "externalId": "navan-txn-1",
             "transaction_ids": ["bt-uuid-1"],
             "reimbursement_ids": ["re-uuid-1"],
         }
