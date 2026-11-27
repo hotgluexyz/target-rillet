@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import random
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from time import sleep
 from typing import Dict, List, Optional
 
 import requests
-from hotglue_singer_sdk.plugin_base import PluginBase
-from hotglue_singer_sdk.target_sdk.client import HotglueSink
 from hotglue_etl_exceptions import InvalidCredentialsError, InvalidPayloadError
 from hotglue_singer_sdk.exceptions import RetriableAPIError
+from hotglue_singer_sdk.plugin_base import PluginBase
+from hotglue_singer_sdk.target_sdk.client import HotglueSink
+
 from target_rillet.attachment_helpers import resolve_attachment_filename_and_type
 
 
@@ -61,13 +66,33 @@ class RilletSink(HotglueSink):
         url = f"{self.get_base_url()}{endpoint or self.endpoint}"
         merged_headers = {**self.auth_headers, **(headers or {})}
 
-        response = requests.request(
-            method=http_method,
-            url=url,
-            params=params,
-            json=request_data,
-            headers=merged_headers,
-        )
+        for attempt in range(5):
+            response = requests.request(
+                method=http_method,
+                url=url,
+                params=params,
+                json=request_data,
+                headers=merged_headers,
+                timeout=60,
+            )
+            # Only retry rejected reads. Writes may already have taken effect,
+            # and not all Rillet endpoints support idempotency keys.
+            if http_method.upper() != "GET" or response.status_code != 429 or attempt == 4:
+                break
+            delay = 2**attempt + random.random()
+            retry_after = response.headers.get("Retry-After")
+            if retry_after:
+                try:
+                    delay = max(0, float(retry_after))
+                except ValueError:
+                    try:
+                        delay = max(
+                            0,
+                            (parsedate_to_datetime(retry_after) - datetime.now(timezone.utc)).total_seconds(),
+                        )
+                    except (TypeError, ValueError):
+                        pass
+            sleep(delay)
         self.validate_response(response)
         return response
 
